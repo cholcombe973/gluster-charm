@@ -1,0 +1,7 @@
+#!/bin/bash
+
+apt-add-repository -y ppa:gluster/glusterfs-3.7
+apt-get update
+
+juju-log "Installing Gluster 3.7"
+apt-get -y install nfs-common glusterfs-server xfsprogs

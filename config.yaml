@@ -1,0 +1,34 @@
+options:
+  volume_name:
+    type: string
+    default: test
+    description: |
+      The name of the Gluster volume to create.  This will also serve as the name
+      of the mount point.  Example: mount -t glusterfs server1:/test
+  brick_paths:
+    type: string
+    default: /mnt/brick1 /mnt/brick2
+    description: |
+      A space seperated list of devices to format and set up as gluster bricks.
+      This field can also list block devices such as /dev/sda /dev/sdb, etc.
+      They will be formatted and mounted at /mnt/sda /mnt/sdb.
+  cluster_type:
+    type: string
+    default: Replicate
+    description: |
+      The type of volume to setup.  Replicate is sufficient for most use cases.
+      Other options include: Distribute,
+        Stripe,
+        StripedAndReplicate,
+        Disperse,
+        DistributedAndStripe,
+        DistributedAndReplicate,
+        DistributedAndStripedAndReplicate,
+        DistributedAndDisperse.
+  replication_level:
+    type: int
+    default: 2
+    description: |
+      This sets how many replicas of the data should be stored in the cluster.
+      Generally 2 or 3 will be fine for almost all use cases.  Greater than 3
+      could be useful for read heavy uses cases.
