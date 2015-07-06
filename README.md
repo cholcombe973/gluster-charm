@@ -1,4 +1,4 @@
-# Gluster charm![![Build Status](https://travis-ci.org/cholcombe973/gluster-charm.svg?branch=master)](https://travis-ci.org/cholcombe973/gluster-charm)
+# Gluster charm[![Build Status](https://travis-ci.org/cholcombe973/gluster-charm.svg?branch=master)](https://travis-ci.org/cholcombe973/gluster-charm)
 
 GlusterFS is an open source, distributed file system capable of scaling
 to several petabytes (actually, 72 brontobytes!) and handling thousands
