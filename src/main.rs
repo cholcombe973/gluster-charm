@@ -30,8 +30,9 @@ struct Config{
 #[cfg(test)]
 mod tests{
     extern crate uuid;
-    use uuid::Uuid;
+    use self::uuid::Uuid;
 
+    /*
     #[test]
     fn generate_test_peers(amount: usize)->Vec<gluster::Peer>{
         let mut peers: Vec<gluster::Peer> = Vec::with_capacity(amount);
@@ -65,6 +66,7 @@ mod tests{
         }
         return bricks;
     }
+    */
 
     #[test]
     fn test_block_device_usage(){
@@ -73,7 +75,7 @@ mod tests{
 
     #[test]
     fn test_load_config(){
-        let result = load_config();
+        let result = super::load_config();
         println!("Result: {:?}", result);
     }
 
