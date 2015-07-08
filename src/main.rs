@@ -10,10 +10,8 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::Read;
-use std::path::Path;
 use std::path::PathBuf;
 use yaml_rust::{Yaml, YamlLoader};
-
 
 /*
     A gluster server has either joined or left this cluster
@@ -569,13 +567,6 @@ fn shrink_volume(
     }
 }
 
-fn server_joined()->Result<(), String>{
-    //This should panic.  Can't recover from this
-    let private_address = try!(juju::unit_get_private_addr());
-    try!(juju::relation_set("hostname", &private_address));
-    return Ok(());
-}
-
 fn server_changed()->Result<(),String>{
     let context = juju::Context::new_from_env();
     let leader = try!(juju::is_leader());
@@ -617,21 +608,25 @@ fn server_changed()->Result<(),String>{
         }else{
             juju::log(&format!("Creating volume {}", config.volume_name));
             match create_volume(&config, &peers, volume_info){
-                Ok(_) => juju::log(&"Create volume succeeded.".to_string()),
+                Ok(_) => {
+                    juju::log(&"Create volume succeeded.".to_string());
+                },
                 Err(e) => {
                     juju::log(&format!("Create volume failed with output: {}", e));
                     return Err(e.to_string());
                 },
             }
             match gluster::volume_start(&config.volume_name, false){
-                Ok(_) => juju::log(&"Starting volume succeeded.".to_string()),
+                Ok(_) => {
+                    juju::log(&"Starting volume succeeded.".to_string());
+                },
                 Err(e) => {
                     juju::log(&format!("Start volume failed with output: {}", e));
                     return Err(e.to_string());
                 },
             };
+            return Ok(());
         }
-        return Ok(());
     }else{
         return Ok(());
     }
@@ -643,44 +638,31 @@ fn server_removed()->Result<(),String>{
     return Ok(());
 }
 
-
 fn main(){
-    //REMOTE_ADDRESS=`relation-get private-address $REMOTE`
-    //TODO: Move this to the juju crate where it belongs
-    //TODO: Expose client relation functionality
     let args: Vec<String> = env::args().collect();
     if args.len() > 0{
-        let path = Path::new(args[0].trim());
-        let filename = match path.file_name(){
-            Some(filename) => filename,
-            None => {
-                juju::log(&format!("Unable to parse filename from {:?}", path));
-                return;
-            },
-        };
-        let match_str = match filename.to_str(){
-            Some(filename) => filename,
-            None => {
-                juju::log(&format!("Failed to transform filename into string {:?}.  Bad symlink name perhaps? Bailing", filename));
-                return;
-            },
-        };
-        let result = match match_str {
-            //"leader-elected" => {},
-            //"leader-settings-changed" => {},
-            //"server-relation-broken" => {},
-            "config-changed" => config_changed(),
-            "server-relation-changed" => server_changed(),
-            "server-relation-departed" => server_removed(),
-            "server-relation-joined" => server_joined(),
-            //if no match call server_changed as a last ditch effort
-            _ => server_changed(),
-        };
-        match result{
-            Ok(_) => {},
-            Err(e) => juju::log(&format!("Execution failed with error: {}", e)),
-        };
-    }else{
-        juju::log(&"Invalid args.  Could not determine which hook to call.".to_string());
+        let mut hook_registry: Vec<juju::Hook> = Vec::new();
+
+        //Register our hooks with the Juju library
+        hook_registry.push(juju::Hook{
+            name: "config-changed".to_string(),
+            callback: Box::new(config_changed),
+        });
+
+        hook_registry.push(juju::Hook{
+            name: "server-relation-changed".to_string(),
+            callback: Box::new(server_changed),
+        });
+
+        hook_registry.push(juju::Hook{
+            name: "server-relation-departed".to_string(),
+            callback: Box::new(server_removed),
+        });
+
+        let result =  juju::process_hooks(args, hook_registry);
+
+        if result.is_err(){
+            juju::log(&format!("Hook failed with error: {:?}", result.err()));
+        }
     }
 }

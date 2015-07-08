@@ -11,14 +11,6 @@ description: |
   resources and managing data in a single global namespace. GlusterFS
   is based on a stackable user space design and can deliver exceptional
   performance for diverse workloads.
-#storage:
-#  brick:
-#    type: block
-#    multiple:
-#      range: 2+
 peers:
   server:
     interface: gluster
-#provides:
-#  nfs:
-#    interface: gluster
