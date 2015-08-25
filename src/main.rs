@@ -11,6 +11,7 @@ use std::fs;
 use std::fs::File;
 use std::io::prelude::Read;
 use std::path::PathBuf;
+use std::thread;
 use yaml_rust::{Yaml, YamlLoader};
 
 /*
@@ -142,14 +143,29 @@ mod tests{
 
 //Reduce the code duplication
 fn get_config_value<'a>(config_hash: &'a yaml_rust::yaml::Hash, name: String)->Option<&'a Yaml>{
-    let field = config_hash.get(&Yaml::String(name)).unwrap();
+    let field_name = Yaml::String(name);
+    let field = match config_hash.get(&field_name){
+        Some(field) => field,
+        None => {
+            juju::log(&format!("Failed to get config field {:?}", &field_name));
+            return None;
+        }
+    };
 
     //Now we're down into that hash map for the field
-    let field_hash = field.as_hash().unwrap();
+    let field_hash = match field.as_hash(){
+        Some(field_hash) => field_hash,
+        None => {
+            juju::log(&format!("Failed to get config field as hash {:?}", field));
+            return None;
+        }
+    };
+
     let default = field_hash.get(&Yaml::String("default".to_string()));
 
     return default;
 }
+
 
 fn config_changed()->Result<(), String>{
     //load the config again
@@ -228,37 +244,85 @@ fn load_config() -> Result<Config, String>{
     return Ok(config);
 }
 
-//Probe in a unit if they haven't joined yet
-fn probe_in_units(existing_peers: &Vec<gluster::Peer>,
-    related_units: Vec<juju::Relation>)->Result<(), String>{
+fn peers_are_ready(peers: Result<Vec<gluster::Peer>, gluster::GlusterError>)->bool{
+    if peers.is_err(){
+        return false;
+    }
 
-    juju::log(&format!("Adding in related_units: {:?}", related_units));
-    for unit in related_units{
-        let address = try!(juju::relation_get_by_unit(&"private-address".to_string(), &unit));
-        let address_trimmed = address.trim().to_string();
-        let mut already_probed: bool = false;
-
-        //I think the localhost test is failing
-        for peer in existing_peers{
-            if peer.hostname == address_trimmed{
-                already_probed = true;
-            }
+    juju::log(&format!("Got peer status: {:?}", peers));
+    let result = match peers{
+        Ok(result) => result,
+        Err(err) => {
+            juju::log(&format!("peers_are_ready failed to get peer status: {:?}", err));
+            return false;
+        },
+    };
+    for peer in result{
+        if peer.status != gluster::State::PeerInCluster{
+            return false;
         }
+    }
+    return true;
+}
 
-        //Probe the peer in
-        if !already_probed{
-            juju::log(&format!("Adding {} to cluster", address_trimmed));
-            match gluster::peer_probe(&address_trimmed){
-                Ok(_) => juju::log(&"Gluster peer probe was successful".to_string()),
-                Err(why) => {
-                    juju::log(&format!("Gluster peer probe failed: {}", why));
-                    return Err(why.to_string());
-                },
-            };
+
+//HDD's are so slow that sometimes the peers take long to join the cluster.
+//This will loop and wait for them ie spinlock
+fn wait_for_peers()->Result<(), String>{
+    juju::log(&"Waiting for all peers to enter the Peer in Cluster status".to_string());
+    let mut iterations = 0;
+    while !peers_are_ready(gluster::peer_status()){
+        thread::sleep_ms(1000);
+        iterations += 1;
+        if iterations > 600 {
+            return Err("Gluster peers failed to connect after 10 minutes".to_string());
         }
     }
     return Ok(());
 }
+
+/*
+  Probe in a unit if they haven't joined yet
+  This function is confusing because Gluster has weird behavior.
+  1. If you probe in units by their IP address it works.  The CLI will show you their resolved hostnames however
+  2. If you probe in units by their hostname instead it'll still work but gluster client mount
+     commands will fail if it can not resolve the hostname.
+     For example: Probing in containers by hostname will cause the glusterfs client to fail to mount
+     on the container host.  :(
+  3. To get around this I'm converting hostnames to ip addresses in the gluster library to mask this from
+     the callers.
+ */
+ fn probe_in_units(existing_peers: &Vec<gluster::Peer>,
+     related_units: Vec<juju::Relation>)->Result<(), String>{
+
+     juju::log(&format!("Adding in related_units: {:?}", related_units));
+     for unit in related_units{
+         let address = try!(juju::relation_get_by_unit(&"private-address".to_string(), &unit));
+         let address_trimmed = address.trim().to_string();
+
+         let mut already_probed: bool = false;
+
+         //I think the localhost test is failing
+         for peer in existing_peers{
+             if peer.hostname == address_trimmed{
+                 already_probed = true;
+             }
+         }
+
+         //Probe the peer in
+         if !already_probed{
+             juju::log(&format!("Adding {} to cluster", &address_trimmed));
+             match gluster::peer_probe(&address_trimmed){
+                 Ok(_) => juju::log(&"Gluster peer probe was successful".to_string()),
+                 Err(why) => {
+                     juju::log(&format!("Gluster peer probe failed: {:?}", why));
+                     return Err(why.to_string());
+                 },
+             };
+         }
+     }
+     return Ok(());
+ }
 
 fn find_new_peers(peers: &Vec<gluster::Peer>, volume_info: &gluster::Volume)->Vec<gluster::Peer>{
     let mut new_peers: Vec<gluster::Peer> = Vec::new();
@@ -427,6 +491,10 @@ fn create_volume(
     peers: &Vec<gluster::Peer>,
     volume_info: Option<gluster::Volume>)->Result<i32,String>{
 
+    //Make sure all peers are in the cluster
+    //spinlock
+    try!(wait_for_peers());
+
     //Build the brick list
     let brick_list = match get_brick_list(&config, &peers, volume_info){
         Some(list) => list,
@@ -586,47 +654,59 @@ fn server_changed()->Result<(),String>{
 
         //Everyone is in.  Lets see if a volume exists
         let volume_info = gluster::volume_info(&config.volume_name);
-        juju::log(&format!("volume info for create/expand volume {:?}", volume_info));
+        //juju::log(&format!("volume info for create/expand volume {:?}", volume_info));
         let mut existing_volume: bool;
         match volume_info {
-            Some(..) => existing_volume = true,
-            None => existing_volume = false,
-        }
-        if existing_volume {
-            //We need to add bricks in groups of the replica count.  how do we do this?
-            juju::log(&format!("Expanding volume {}", config.volume_name));
-            match expand_volume(config, peers, volume_info){
-                Ok(v) => {
-                    juju::log(&format!("Expand volume succeeded.  Return code: {}", v));
-                    return Ok(());
-                },
-                Err(e) => {
-                    juju::log(&format!("Expand volume failed with output: {}", e));
-                    return Err(e);
-                },
+            Ok(_) => {
+                juju::log(&format!("Expanding volume {}", config.volume_name));
+                match expand_volume(config, peers, volume_info.ok()){
+                    Ok(v) => {
+                        juju::log(&format!("Expand volume succeeded.  Return code: {}", v));
+                        return Ok(());
+                    },
+                    Err(e) => {
+                        juju::log(&format!("Expand volume failed with output: {}", e));
+                        return Err(e);
+                    },
+                }
+            },
+            Err (gluster::GlusterError::NoVolumesPresent) => {
+                existing_volume = false;
+            },
+            _ => {
+                return Err("Volume info command failed".to_string());
             }
-        }else{
+        }
+        /*
+                    //Only set existing_volume to false if we have this specific error
+                    gluster::GlusterError::NoVolumesPresent => {
+                        existing_volume = false;
+                    }
+                    //Otherwise something failed and lets return that error
+                    _ => {
+                        return Err(e.to_string());
+                    }
+                }
+        }
+        */
+        if ! existing_volume{
             juju::log(&format!("Creating volume {}", config.volume_name));
-            match create_volume(&config, &peers, volume_info){
-                Ok(_) => {
-                    juju::log(&"Create volume succeeded.".to_string());
-                },
+            match create_volume(&config, &peers, None){
+                Ok(_) => juju::log(&"Create volume succeeded.".to_string()),
                 Err(e) => {
                     juju::log(&format!("Create volume failed with output: {}", e));
                     return Err(e.to_string());
                 },
             }
             match gluster::volume_start(&config.volume_name, false){
-                Ok(_) => {
-                    juju::log(&"Starting volume succeeded.".to_string());
-                },
+                Ok(_) => juju::log(&"Starting volume succeeded.".to_string()),
                 Err(e) => {
-                    juju::log(&format!("Start volume failed with output: {}", e));
+                    juju::log(&format!("Start volume failed with output: {:?}", e));
                     return Err(e.to_string());
                 },
             };
-            return Ok(());
         }
+        return Ok(());
     }else{
         return Ok(());
     }

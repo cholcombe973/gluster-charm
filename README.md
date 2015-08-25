@@ -79,7 +79,11 @@ show you how to install the glusterfs packages.
 
 On your juju host you can mount Gluster with fuse like so:
 
-    mount -t glusterfs <ip of unit>:/<volume_name> mount_point/
+    mount -t glusterfs <ip or hostname of unit>:/<volume_name> mount_point/
+
+## Notes:
+If you're using containers to test Gluster you might need to edit /etc/default/lxc-net
+and read the last section about if you want lxcbr0's dnsmasq to resolve the .lxc domain
 
 Now to show that your cluster can handle failure you can:
 
