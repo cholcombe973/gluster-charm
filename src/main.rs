@@ -297,7 +297,7 @@ fn wait_for_peers()->Result<(), String>{
 
      juju::log(&format!("Adding in related_units: {:?}", related_units));
      for unit in related_units{
-         let address = try!(juju::relation_get_by_unit(&"private-address".to_string(), &unit));
+         let address = try!(juju::relation_get_by_unit(&"private-address".to_string(), &unit).map_err(|e| e.to_string()));
          let address_trimmed = address.trim().to_string();
 
          let mut already_probed: bool = false;
@@ -637,7 +637,7 @@ fn shrink_volume(
 
 fn server_changed()->Result<(),String>{
     let context = juju::Context::new_from_env();
-    let leader = try!(juju::is_leader());
+    let leader = try!(juju::is_leader().map_err(|e| e.to_string()));
 
     if leader{
         juju::log(&format!("I am the leader: {}", context.relation_id));
@@ -647,7 +647,7 @@ fn server_changed()->Result<(),String>{
         juju::log(&"Checking for new peers to probe".to_string());
         let mut peers = try!(gluster::peer_list().map_err(|e| e.to_string()));
         juju::log(&format!("peer list: {:?}", peers));
-        let related_units = try!(juju::relation_list());
+        let related_units = try!(juju::relation_list().map_err(|e| e.to_string()));
         try!(probe_in_units(&peers, related_units));
         //Update our peer list
         peers = try!(gluster::peer_list().map_err(|e| e.to_string()));
