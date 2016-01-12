@@ -19,10 +19,3 @@ filesystem:
   description: |
     The filesystem type to use for each one of the bricks.  Can be either
     xfs, btrfs, or ext4
-
-storage:
-  brick:
-    type: block
-    description: A block device to be used as a Gluster brick.
-    multiple:
-      range: 1-

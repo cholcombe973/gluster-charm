@@ -225,13 +225,12 @@ fn load_config() -> Result<Config, String>{
     let replicas = try!(replica_field.as_i64().ok_or(
         "Unable to convert replicas to an integer"));
 
-    let storage_devices = try!(juju::storage_list().map_err(|e| e.to_string()));
-    juju::log(&format!("storage-list result: {:?}", storage_devices));
+    let brick_paths = try!(get_config_value(hash_map, "brick_paths".to_string()).ok_or(
+        "Unable to parse brick_paths from config file"));
+    let brick_path_pieces: Vec<&str> = try!(brick_paths.as_str().ok_or(
+        "Unable to parse convert brick_paths into a String")).split(" ").collect();
 
-    let bricks: Vec<String> = storage_devices.split('\n').map(
-        |s| juju::storage_get(s).unwrap_or("".to_string()))
-        .filter(|s| !s.is_empty())
-        .collect();
+    let bricks: Vec<String> = brick_path_pieces.iter().map(|s| s.to_string()).collect();
 
     let config = Config{
         volume_name: volume_name_str.to_string(),
@@ -758,43 +757,6 @@ fn server_removed()->Result<(),String>{
     return Ok(());
 }
 
-fn brick_storage_attached()->Result<(), String>{
-    //check if mounted
-    let brick_location = try!(juju::storage_get_location().map_err(|e| e.to_string()));
-    juju::log(&format!("brick_storage_attached: {:?}", brick_location));
-    let format_options = block::Filesystem::Xfs{
-        inode_size: None, //Use the default
-        force: true,
-    };
-
-    try!(juju::status_set(juju::Status{
-        status_type: juju::StatusType::Maintenance,
-        message: format!("Formatting block device {}", brick_location)
-    }).map_err(|e| e.to_string()));
-
-    let ret_val = try!(block::format_block_device(&PathBuf::from(brick_location),
-        &format_options));
-    if ret_val < 0{
-        return Err(format!("Format failed with return value: {}", ret_val));
-    }
-
-    try!(juju::status_set(juju::Status{
-        status_type: juju::StatusType::Maintenance,
-        message: "".to_string(),
-    }).map_err(|e| e.to_string()));
-
-    //Call server_changed() to deal with this new block device
-    try!(server_changed());
-    return Ok(());
-}
-
-fn brick_storage_detaching()->Result<(), String>{
-    let brick_location = try!(juju::storage_get_location().map_err(|e| e.to_string()));
-    println!("brick_location: {:?}", brick_location);
-
-    return Ok(());
-}
-
 fn main(){
     let args: Vec<String> = env::args().collect();
     if args.len() > 0{
@@ -814,16 +776,6 @@ fn main(){
         hook_registry.push(juju::Hook{
             name: "server-relation-departed".to_string(),
             callback: Box::new(server_removed),
-        });
-
-        hook_registry.push(juju::Hook{
-            name: "brick-storage-attached".to_string(),
-            callback: Box::new(brick_storage_attached),
-        });
-
-        hook_registry.push(juju::Hook{
-            name: "brick-storage-detaching".to_string(),
-            callback: Box::new(brick_storage_detaching),
         });
 
         let result =  juju::process_hooks(args, hook_registry);
