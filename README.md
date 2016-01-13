@@ -66,9 +66,7 @@ For a simple test deploy 4 gluster units like so
     juju deploy gluster -n 4
 
 Once the status is started the charm will bring both units together into a cluster and create a volume.  
-You will know the cluster is ready when you see a line saying:
-
-    Start volume succeeded.
+You will know the cluster is ready when you see a status of active.
 
 Now you can mount the exported GlusterFS filesystem with either fuse or NFS.  Fuse has the advantage of
 knowing how to talk to all replicas in your Gluster cluster so it will not need other high availablity
