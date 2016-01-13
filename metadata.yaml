@@ -14,8 +14,3 @@ description: |
 peers:
   server:
     interface: gluster
-filesystem:
-  default: xfs
-  description: |
-    The filesystem type to use for each one of the bricks.  Can be either
-    xfs, btrfs, or ext4

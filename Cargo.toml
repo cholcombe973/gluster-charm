@@ -6,7 +6,7 @@ authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 [dependencies]
 gluster = "*"
 itertools = "*"
-juju = { path = "/home/chris/repos/juju"}
+juju = "*"
 libudev = "*"
 regex = "*"
 uuid = "*"

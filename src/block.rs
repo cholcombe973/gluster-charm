@@ -45,6 +45,17 @@ pub enum FilesystemType{
     Unknown,
 }
 
+impl FilesystemType{
+    pub fn from_str(fs_type: &str)->FilesystemType{
+        match fs_type{
+            "btrfs" => FilesystemType::Btrfs,
+            "ext4" => FilesystemType::Ext4,
+            "xfs" => FilesystemType::Xfs,
+            _ => FilesystemType::Unknown,
+        }
+    }
+}
+
 impl MetadataProfile {
     pub fn to_string(self) -> String {
         match self {

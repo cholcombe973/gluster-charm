@@ -24,6 +24,7 @@ struct Config{
     brick_paths: Vec<String>,
     cluster_type: gluster::VolumeType,
     replicas: usize,
+    filesystem_type: block::FilesystemType,
 }
 
 #[cfg(test)]
@@ -73,8 +74,9 @@ mod tests{
     }
 
     #[test]
-    fn test_load_config(){
-        let result = super::load_config();
+    fn test_parse_config(){
+        let test_config = r#""#;
+        let result = super::parse_config(&test_config.to_string());
         println!("Result: {:?}", result);
     }
 
@@ -169,23 +171,22 @@ fn get_config_value<'a>(config_hash: &'a yaml_rust::yaml::Hash, name: String)->O
 
 fn config_changed()->Result<(), String>{
     //load the config again
-    let new_config = load_config();
+    let mut f = try!(File::open("config.yaml").map_err(|e| e.to_string()));
+    let mut s = String::new();
+    try!(f.read_to_string(&mut s).map_err(|e| e.to_string()));
+    let new_config = parse_config(&s);
 
     //how do we figure out what changed?
     return Ok(());
 }
+
 //Parsing this yaml file is hideous
-fn load_config() -> Result<Config, String>{
-    let mut f = try!(File::open("config.yaml").map_err(|e| e.to_string()));
-
-    let mut s = String::new();
-    try!(f.read_to_string(&mut s).map_err(|e| e.to_string()));
-
+fn parse_config(config_contents: &String) -> Result<Config, String>{
     //Remove this hack when the new version of yaml_rust releases to get the real error msg
-    let data = match YamlLoader::load_from_str(&s){
+    let data = match YamlLoader::load_from_str(&config_contents){
         Ok(data) => data,
         Err(_) => {
-            return Err("Unable to load yaml data from config file".to_string());
+            return Err("Unable to load yaml data".to_string());
         },
     };
 
@@ -232,11 +233,20 @@ fn load_config() -> Result<Config, String>{
 
     let bricks: Vec<String> = brick_path_pieces.iter().map(|s| s.to_string()).collect();
 
+    let filesystem_field = try!(get_config_value(hash_map, "filesystem_type".to_string()).ok_or(
+        "Unable to parse filesystem_type from config file"));
+
+    let filesystem_str = try!(filesystem_field.as_str().ok_or(
+        "unable to convert filesystem_field to a String"));
+
+    let filesystem_type = block::FilesystemType::from_str(&filesystem_str);
+
     let config = Config{
         volume_name: volume_name_str.to_string(),
         brick_paths: bricks,
         cluster_type: gluster::VolumeType::new(&cluster_type.to_string()),
         replicas: (replicas as usize),
+        filesystem_type: filesystem_type,
     };
     juju::log(&format!("Config yaml file: {:?}", config));
     return Ok(config);
@@ -428,7 +438,7 @@ fn check_and_create_dir(path: &str)->Result<(), String>{
 }
 
 //TODO: This blindly formats block devices and ignores what's on them.
-fn check_brick_list(bricks: &Vec<gluster::Brick>)->Result<Vec<gluster::Brick>, String>{
+fn check_brick_list(config: &Config, bricks: &Vec<gluster::Brick>)->Result<Vec<gluster::Brick>, String>{
     let mut clean_bricks: Vec<gluster::Brick> = Vec::new();
     for brick in bricks{
         let block_check = block::is_block_device(&brick.path);
@@ -445,11 +455,59 @@ fn check_brick_list(bricks: &Vec<gluster::Brick>)->Result<Vec<gluster::Brick>, S
             juju::log(&format!("Gathering info on block device: {:?}", &brick.path));
 
             //Format with the default XFS unless told otherwise
-            juju::log(&format!("Formatting block device with XFS: {:?}", &brick.path));
-            let filesystem_type = block::Filesystem::Xfs{inode_size: None, force: true};
-            try!(block::format_block_device(
-                &brick.path,
-                &filesystem_type).map_err(|e| e.to_string()));
+            match config.filesystem_type{
+                block::FilesystemType::Xfs => {
+                    juju::log(&format!("Formatting block device with XFS: {:?}", &brick.path));
+                    try!(juju::status_set(juju::Status{
+                        status_type: juju::StatusType::Maintenance,
+                        message: format!("Formatting block device with XFS: {:?}", &brick.path),
+                    }).map_err(|e| e.to_string()));
+
+                    let filesystem_type = block::Filesystem::Xfs{inode_size: None, force: true};
+                    try!(block::format_block_device(
+                        &brick.path,
+                        &filesystem_type).map_err(|e| e.to_string()));
+                },
+                block::FilesystemType::Ext4 => {
+                    juju::log(&format!("Formatting block device with Ext4: {:?}", &brick.path));
+                    try!(juju::status_set(juju::Status{
+                        status_type: juju::StatusType::Maintenance,
+                        message: format!("Formatting block device with Ext4: {:?}", &brick.path),
+                    }).map_err(|e| e.to_string()));
+
+                    let filesystem_type = block::Filesystem::Ext4{inode_size: 0, reserved_blocks_percentage: 0};
+                    try!(block::format_block_device(
+                        &brick.path,
+                        &filesystem_type).map_err(|e| e.to_string()));
+                },
+                block::FilesystemType::Btrfs => {
+                    juju::log(&format!("Formatting block device with Btrfs: {:?}", &brick.path));
+                    try!(juju::status_set(juju::Status{
+                        status_type: juju::StatusType::Maintenance,
+                        message: format!("Formatting block device with Btrfs: {:?}", &brick.path),
+                    }).map_err(|e| e.to_string()));
+
+                    let filesystem_type = block::Filesystem::Btrfs{
+                        leaf_size: 0,
+                        node_size: 0,
+                        metadata_profile: block::MetadataProfile::Single};
+                    try!(block::format_block_device(
+                        &brick.path,
+                        &filesystem_type).map_err(|e| e.to_string()));
+                },
+                _ => {
+                    juju::log(&format!("Formatting block device with XFS: {:?}", &brick.path));
+                    try!(juju::status_set(juju::Status{
+                        status_type: juju::StatusType::Maintenance,
+                        message: format!("Formatting block device with XFS: {:?}", &brick.path),
+                    }).map_err(|e| e.to_string()));
+
+                    let filesystem_type = block::Filesystem::Xfs{inode_size: None, force: true};
+                    try!(block::format_block_device(
+                        &brick.path,
+                        &filesystem_type).map_err(|e| e.to_string()));
+                }
+            }
 
             //Update our block device info to reflect formatting
             let device_info = try!(
@@ -459,6 +517,11 @@ fn check_brick_list(bricks: &Vec<gluster::Brick>)->Result<Vec<gluster::Brick>, S
             try!(check_and_create_dir(&mount_path));
 
             juju::log(&format!("Mounting block device {:?} at {}", &brick.path, mount_path));
+            try!(juju::status_set(juju::Status{
+                status_type: juju::StatusType::Maintenance,
+                message: format!("Mounting block device {:?} at {}", &brick.path, mount_path),
+            }).map_err(|e| e.to_string()));
+
             try!(block::mount_device(
                 &device_info,
                 &mount_path).map_err(|e| e.to_string()));
@@ -502,7 +565,7 @@ fn create_volume(
 
     //Check to make sure the bricks are formatted and mounted
     let clean_bricks = try!(
-        check_brick_list(&brick_list).map_err(|e| e.to_string())
+        check_brick_list(&config, &brick_list).map_err(|e| e.to_string())
     );
 
     juju::log(&format!("Creating volume of type {:?} with brick list {:?}",
@@ -601,7 +664,7 @@ fn expand_volume(
 
     //Check to make sure the bricks are formatted and mounted
     let clean_bricks = try!(
-        check_brick_list(&brick_list).map_err(|e| e.to_string())
+        check_brick_list(&config, &brick_list).map_err(|e| e.to_string())
     );
 
     juju::log(&format!("Expanding volume with brick list: {:?}", clean_bricks));
@@ -640,7 +703,12 @@ fn server_changed()->Result<(),String>{
     if leader{
         juju::log(&format!("I am the leader: {}", context.relation_id));
         juju::log(&"Loading config".to_string());
-        let config = try!(load_config());
+
+        let mut f = try!(File::open("config.yaml").map_err(|e| e.to_string()));
+        let mut s = String::new();
+        try!(f.read_to_string(&mut s).map_err(|e| e.to_string()));
+
+        let config = try!(parse_config(&s));
 
         try!(juju::status_set(juju::Status{
             status_type: juju::StatusType::Maintenance,
@@ -670,7 +738,7 @@ fn server_changed()->Result<(),String>{
                     Ok(v) => {
                         juju::log(&format!("Expand volume succeeded.  Return code: {}", v));
                         try!(juju::status_set(juju::Status{
-                            status_type: juju::StatusType::Maintenance,
+                            status_type: juju::StatusType::Active,
                             message: "Expand volume succeeded.".to_string(),
                         }).map_err(|e| e.to_string()));
                         return Ok(());
@@ -737,6 +805,10 @@ fn server_changed()->Result<(),String>{
                 },
                 Err(e) => {
                     juju::log(&format!("Start volume failed with output: {:?}", e));
+                    try!(juju::status_set(juju::Status{
+                        status_type: juju::StatusType::Blocked,
+                        message: "Start volume failed.  Please check juju debug-log.".to_string(),
+                    }).map_err(|e| e.to_string()));
                     return Err(e.to_string());
                 },
             };

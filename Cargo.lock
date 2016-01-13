@@ -4,7 +4,7 @@ version = "0.1.0"
 dependencies = [
  "gluster 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "juju 0.2.1",
+ "juju 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libudev 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 0.1.46 (registry+https://github.com/rust-lang/crates.io-index)",
  "uuid 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -57,7 +57,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "juju"
-version = "0.2.1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "libc"
