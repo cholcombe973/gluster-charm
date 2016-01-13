@@ -7,7 +7,7 @@ options:
       of the mount point.  Example: mount -t glusterfs server1:/test
   brick_paths:
     type: string
-    default: /mnt/brick1 /mnt/brick2
+    default: /mnt/brick1
     description: |
       A space seperated list of devices to format and set up as gluster bricks.
       This field can also list block devices such as /dev/sda /dev/sdb, etc.

@@ -30,6 +30,8 @@ struct Config{
 #[cfg(test)]
 mod tests{
     extern crate uuid;
+    use std::fs::File;
+    use std::io::prelude::Read;
     use self::uuid::Uuid;
 
     /*
@@ -75,8 +77,11 @@ mod tests{
 
     #[test]
     fn test_parse_config(){
-        let test_config = r#""#;
-        let result = super::parse_config(&test_config.to_string());
+        let mut f = File::open("tests/test-config.yaml").unwrap();
+        let mut s = String::new();
+        f.read_to_string(&mut s).unwrap();
+
+        let result = super::parse_config(&s);
         println!("Result: {:?}", result);
     }
 
@@ -144,28 +149,18 @@ mod tests{
 
 
 //Reduce the code duplication
-fn get_config_value<'a>(config_hash: &'a yaml_rust::yaml::Hash, name: String)->Option<&'a Yaml>{
+fn get_config_value<'a>(config_hash: &'a yaml_rust::yaml::Hash, name: String)->Result<&'a Yaml, String>{
+    println!("Getting field name: {}", &name);
     let field_name = Yaml::String(name);
     let field = match config_hash.get(&field_name){
         Some(field) => field,
         None => {
             juju::log(&format!("Failed to get config field {:?}", &field_name));
-            return None;
+            return Err(format!("Failed to get field: {:?}", &field_name));
         }
     };
-
-    //Now we're down into that hash map for the field
-    let field_hash = match field.as_hash(){
-        Some(field_hash) => field_hash,
-        None => {
-            juju::log(&format!("Failed to get config field as hash {:?}", field));
-            return None;
-        }
-    };
-
-    let default = field_hash.get(&Yaml::String("default".to_string()));
-
-    return default;
+    println!("Got field: {:?}", &field);
+    return Ok(field);
 }
 
 
@@ -207,38 +202,23 @@ fn parse_config(config_contents: &String) -> Result<Config, String>{
     //Pass this to our function
     let hash_map = try!(options.as_hash().ok_or(
         "options are not in the form of a dictionary"));
+    let volume_name = try!(get_config_value(hash_map, "volume_name".to_string()));
 
-    let volume_name = try!(get_config_value(hash_map, "volume_name".to_string()).ok_or(
-        "Unable to parse volume_name from config file"));
+    let volume_name_str = volume_name.as_str().unwrap_or("test");
 
-    let volume_name_str = try!(volume_name.as_str().ok_or(
-        "Unable to convert volume_name to a String"));
+    let cluster_type_field = try!(get_config_value(hash_map, "cluster_type".to_string()));
+    let cluster_type = cluster_type_field.as_str().unwrap_or("Replicate");
 
-    let cluster_type_field = try!(get_config_value(hash_map, "cluster_type".to_string()).ok_or(
-        "Unable to parse cluster_type from config file"));
+    let replica_field = try!(get_config_value(hash_map, "replication_level".to_string()));
+    let replicas = replica_field.as_i64().unwrap_or(2);
 
-    let cluster_type = try!(cluster_type_field.as_str().ok_or(
-        "Unable to convert cluster_type to a String"));
-
-    let replica_field = try!(get_config_value(hash_map, "replication_level".to_string()).ok_or(
-        "Unable to parse replicas from config file"));
-
-    let replicas = try!(replica_field.as_i64().ok_or(
-        "Unable to convert replicas to an integer"));
-
-    let brick_paths = try!(get_config_value(hash_map, "brick_paths".to_string()).ok_or(
-        "Unable to parse brick_paths from config file"));
-    let brick_path_pieces: Vec<&str> = try!(brick_paths.as_str().ok_or(
-        "Unable to parse convert brick_paths into a String")).split(" ").collect();
-
+    let brick_paths = try!(get_config_value(hash_map, "brick_paths".to_string()));
+    let brick_path_raw = brick_paths.as_str().unwrap_or("/mnt/brick1");
+    let brick_path_pieces: Vec<&str> = brick_path_raw.split(" ").collect();
     let bricks: Vec<String> = brick_path_pieces.iter().map(|s| s.to_string()).collect();
 
-    let filesystem_field = try!(get_config_value(hash_map, "filesystem_type".to_string()).ok_or(
-        "Unable to parse filesystem_type from config file"));
-
-    let filesystem_str = try!(filesystem_field.as_str().ok_or(
-        "unable to convert filesystem_field to a String"));
-
+    let filesystem_field = try!(get_config_value(hash_map, "filesystem_type".to_string()));
+    let filesystem_str = filesystem_field.as_str().unwrap_or("xfs");
     let filesystem_type = block::FilesystemType::from_str(&filesystem_str);
 
     let config = Config{
