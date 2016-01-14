@@ -2,13 +2,12 @@
 name = "gluster-charm"
 version = "0.1.0"
 dependencies = [
- "gluster 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gluster 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "juju 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libudev 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 0.1.46 (registry+https://github.com/rust-lang/crates.io-index)",
  "uuid 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
- "yaml-rust 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -40,7 +39,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "gluster"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "byteorder 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -160,10 +159,5 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "winapi-build"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "yaml-rust"
-version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 

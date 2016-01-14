@@ -10,7 +10,6 @@ juju = "*"
 libudev = "*"
 regex = "*"
 uuid = "*"
-yaml-rust = "*"
 
 # The development profile, used for `cargo build`
 [profile.dev]
