@@ -275,7 +275,7 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
                   -> Option<Vec<gluster::Brick>> {
 
     // Default to 3 replicas if the parsing fails
-    let replica_config = get_config_value("replicas").unwrap_or("3".to_string());
+    let replica_config = get_config_value("replication_level").unwrap_or("3".to_string());
     let replicas = replica_config.parse().unwrap_or(3);
 
     let brick_path_config = match get_config_value("brick_paths") {
@@ -484,10 +484,10 @@ fn create_volume(peers: &Vec<gluster::Peer>,
     let cluster_type_config = try!(get_config_value("cluster_type"));
     let cluster_type = gluster::VolumeType::from_str(&cluster_type_config);
     let volume_name = try!(get_config_value("volume_name"));
-    let replicas = match try!(get_config_value("replicas")).parse() {
+    let replicas = match try!(get_config_value("replication_level")).parse() {
         Ok(r) => r,
-        Err(_) => {
-            juju::log(&"Invalid config value for replicas.  Defaulting to 3".to_string());
+        Err(e) => {
+            juju::log(&format!("Invalid config value for replicas.  Defaulting to 3. Error was {}", e));
             3
         }
     };
