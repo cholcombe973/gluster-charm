@@ -1,7 +1,14 @@
 #!/bin/bash
 
-apt-add-repository -y ppa:gluster/glusterfs-3.7
-apt-get update
+if [ -f /etc/redhat-release ]
+  then
+    juju-log "Installing Gluster 3.7"
+    wget -P /etc/yum.repos.d http://download.gluster.org/pub/gluster/glusterfs/LATEST/RHEL/glusterfs-epel.repo
+    yum install glusterfs-server
+  else
+    apt-add-repository -y ppa:gluster/glusterfs-3.7
+    apt-get update
 
-juju-log "Installing Gluster 3.7"
-apt-get -y install nfs-common glusterfs-server xfsprogs
+    juju-log "Installing Gluster 3.7"
+    apt-get -y install nfs-common glusterfs-server xfsprogs
+fi
