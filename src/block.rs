@@ -146,7 +146,7 @@ pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
     match device.id {
         Some(id) => {
             arg_list.push("-U".to_string());
-            arg_list.push(id.to_hyphenated_string());
+            arg_list.push(id.hyphenated().to_string());
         }
         None => {}
     };

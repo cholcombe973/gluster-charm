@@ -11,6 +11,7 @@ use std::fs::File;
 use std::io::prelude::Read;
 use std::path::PathBuf;
 use std::thread;
+use std::time::Duration;
 
 // A gluster server has either joined or left this cluster
 //
@@ -176,7 +177,7 @@ fn wait_for_peers() -> Result<(), String> {
     juju::log(&"Waiting for all peers to enter the Peer in Cluster status".to_string());
     let mut iterations = 0;
     while !peers_are_ready(gluster::peer_status()) {
-        thread::sleep_ms(1000);
+        thread::sleep(Duration::from_secs(1));
         iterations += 1;
         if iterations > 600 {
             return Err("Gluster peers failed to connect after 10 minutes".to_string());
