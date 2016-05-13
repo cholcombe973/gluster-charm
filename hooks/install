@@ -1,6 +1,9 @@
 #!/bin/bash
 
-if [ -f /etc/redhat-release ]
+hooks_dir="$(dirname "$0")"
+source "$hooks_dir/helpers.sh"
+
+if is_centos
   then
     juju-log "Installing Gluster 3.7"
     wget -P /etc/yum.repos.d http://download.gluster.org/pub/gluster/glusterfs/LATEST/RHEL/glusterfs-epel.repo

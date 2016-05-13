@@ -132,6 +132,16 @@ mod tests {
     //
 }
 
+//Need more expressive return values so we can wait on peers
+#[derive(Debug)]
+enum Status{
+    Created,
+    WaitForMorePeers,
+    InvalidConfig(String),
+    FailedToCreate(String),
+    FailedToStart(String),
+}
+
 fn get_config_value(name: &str) -> Result<String, String> {
     match juju::config_get(&name.to_string()){
         Ok(v) => Ok(v),
@@ -273,7 +283,7 @@ fn brick_and_server_cartesian_product(peers: &Vec<gluster::Peer>,
 // If insufficient hosts exist to satisfy this replication level this will return no new bricks to add
 fn get_brick_list(peers: &Vec<gluster::Peer>,
                   volume: Option<gluster::Volume>)
-                  -> Option<Vec<gluster::Brick>> {
+                  -> Result<Vec<gluster::Brick>, Status> {
 
     // Default to 3 replicas if the parsing fails
     let replica_config = get_config_value("replication_level").unwrap_or("3".to_string());
@@ -281,8 +291,8 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
 
     let brick_path_config = match get_config_value("brick_paths") {
         Ok(b) => b,
-        Err(_) => {
-            return None;
+        Err(e) => {
+            return Err(Status::InvalidConfig(format!("Unable to get brick_paths config value. {}", e)));
         }
     };
 
@@ -298,11 +308,11 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
             juju::log(&"Not enough peers to satisfy the replication level for the Gluster \
                         volume.  Waiting for more peers to join."
                            .to_string());
-            return None;
+            return Err(Status::WaitForMorePeers);
         } else if peers.len() == replicas {
             // Case 1: A perfect marriage of peers and number of replicas
             juju::log(&"Number of peers and number of replicas match".to_string());
-            return Some(brick_and_server_cartesian_product(peers, &brick_paths));
+            return Ok(brick_and_server_cartesian_product(peers, &brick_paths));
         } else {
             // Case 2: We have a mismatch of replicas and hosts
             // Take as many as we can and leave the rest for a later time
@@ -312,7 +322,7 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
             // Drop these peers off the end of the list
             new_peers.truncate(count);
             juju::log(&format!("Too many new peers.  Dropping {} peers off the list", count));
-            return Some(brick_and_server_cartesian_product(&new_peers, &brick_paths));
+            return Ok(brick_and_server_cartesian_product(&new_peers, &brick_paths));
         }
     } else {
         // Existing volume.  Build a differential list.
@@ -321,16 +331,16 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
 
         if new_peers.len() < replicas {
             juju::log(&"New peers found are less than needed by the replica count".to_string());
-            return None;
+            return Err(Status::WaitForMorePeers);
         } else if new_peers.len() == replicas {
             juju::log(&"New peers and number of replicas match".to_string());
-            return Some(brick_and_server_cartesian_product(&new_peers, &brick_paths));
+            return Ok(brick_and_server_cartesian_product(&new_peers, &brick_paths));
         } else {
             let count = new_peers.len() - (new_peers.len() % replicas);
             // Drop these peers off the end of the list
             juju::log(&format!("Too many new peers.  Dropping {} peers off the list", count));
             new_peers.truncate(count);
-            return Some(brick_and_server_cartesian_product(&new_peers, &brick_paths));
+            return Ok(brick_and_server_cartesian_product(&new_peers, &brick_paths));
         }
     }
 }
@@ -499,8 +509,22 @@ fn create_volume(peers: &Vec<gluster::Peer>,
 
     // Build the brick list
     let brick_list = match get_brick_list(&peers, volume_info) {
-        Some(list) => list,
-        None => return Ok(0),
+        Ok(list) => list,
+        Err(e) => {
+            match e{
+                Status::WaitForMorePeers => {
+                    juju::log(&"Waiting for more peers".to_string());
+                    return Ok(0);
+                },
+                Status::InvalidConfig(config_err) => {
+                    return Err(config_err);
+                },
+                _ => {
+                    //Some other error
+                    return Err(format!("Unknown error in create volume: {:?}", e));
+                }
+            }
+        }
     };
     juju::log(&format!("Got brick list: {:?}", brick_list));
 
@@ -603,10 +627,21 @@ fn expand_volume(peers: Vec<gluster::Peer>,
 
     // Build the brick list
     let brick_list = match get_brick_list(&peers, volume_info) {
-        Some(list) => list,
-        None => {
-            juju::log(&"No new bricks found to be added to the volume".to_string());
-            return Ok(0);
+        Ok(list) => list,
+        Err(e) => {
+            match e{
+                Status::WaitForMorePeers => {
+                    juju::log(&"Waiting for more peers".to_string());
+                    return Ok(0);
+                },
+                Status::InvalidConfig(config_err) => {
+                    return Err(config_err);
+                },
+                _ => {
+                    //Some other error
+                    return Err(format!("Unknown error in expand volume: {:?}", e));
+                }
+            }
         }
     };
 
@@ -629,9 +664,21 @@ fn shrink_volume(peer: gluster::Peer, volume_info: Option<gluster::Volume>) -> R
 
     // Build the brick list
     let brick_list = match get_brick_list(&peers, volume_info) {
-        Some(list) => list,
-        None => {
-            return Ok(0);
+        Ok(list) => list,
+        Err(e) => {
+            match e{
+                Status::WaitForMorePeers => {
+                    juju::log(&"Waiting for more peers".to_string());
+                    return Ok(0);
+                },
+                Status::InvalidConfig(config_err) => {
+                    return Err(config_err);
+                },
+                _ => {
+                    //Some other error
+                    return Err(format!("Unknown error in shrink volume: {:?}", e));
+                }
+            }
         }
     };
 
