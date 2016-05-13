@@ -1,7 +1,7 @@
 name: gluster
 summary: Cluster Filesystem capable of scaling to several peta-bytes
 maintainer: Chris Holcombe <chris.holcombe@canonical.com>
-series: ['trusty', 'xenial', 'centos']
+series: ['trusty', 'xenial']
 tags:
   - storage
 description: |
