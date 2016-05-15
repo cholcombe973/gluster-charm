@@ -1,9 +1,12 @@
+extern crate juju;
 extern crate libudev;
 extern crate regex;
 extern crate uuid;
 use self::regex::Regex;
 use self::uuid::Uuid;
 
+use std::fs;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -140,6 +143,17 @@ fn run_command(command: &str, arg_list: &Vec<String>, as_root: bool) -> Output {
     }
 }
 
+//Install xfsprogs, btrfs-tools, etc for mkfs to succeed
+fn install_utils()-> Result<i32, String>{
+    let arg_list = vec![
+        "install".to_string(),
+        "-y".to_string(),
+        "btrfs-tools".to_string(),
+        "xfsprogs".to_string()
+    ];
+    return process_output(run_command("/usr/bin/apt-get", &arg_list, true));
+}
+
 // This assumes the device is formatted at this point
 pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
     let mut arg_list: Vec<String> = Vec::new();
@@ -148,7 +162,9 @@ pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
             arg_list.push("-U".to_string());
             arg_list.push(id.hyphenated().to_string());
         }
-        None => {}
+        None => {
+            arg_list.push(format!("/dev/{}", device.name));
+        }
     };
     // arg_list.push("-t".to_string());
     // match device.fs_type{
@@ -172,12 +188,13 @@ pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
 }
 
 fn process_output(output: Output) -> Result<i32, String> {
-    let status = output.status;
-    println!("{}", String::from_utf8(output.stdout).unwrap());
+    juju::log(&format!("Command output: {:?}", output));
 
-    match status.code() {
-        Some(v) => Ok(v),
-        None => Err(String::from_utf8(output.stderr).unwrap()),
+    if output.status.success() {
+        Ok(0)
+    }else{
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Err(stderr)
     }
 }
 
@@ -196,7 +213,18 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
             arg_list.push(node_size.to_string());
 
             arg_list.push(device.to_string_lossy().to_string());
-
+            //Check if mkfs.xfs is installed
+            match fs::metadata("/sbin/mkfs.btrfs") {
+                Ok(_) => {},
+                Err(e) => {
+                    match e.kind() {
+                        ErrorKind::NotFound => {
+                            try!(install_utils());
+                        }
+                        _ => {}
+                    }
+                }
+            }
             return process_output(run_command("mkfs.btrfs", &arg_list, true));
         }
         &Filesystem::Xfs{ref inode_size, ref force} => {
@@ -213,7 +241,19 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
 
             arg_list.push(device.to_string_lossy().to_string());
 
-            return process_output(run_command("mkfs.xfs", &arg_list, true));
+            //Check if mkfs.xfs is installed
+            match fs::metadata("/sbin/mkfs.xfs") {
+                Ok(_) => {},
+                Err(e) => {
+                    match e.kind() {
+                        ErrorKind::NotFound => {
+                            try!(install_utils());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            return process_output(run_command("/sbin/mkfs.xfs", &arg_list, true));
         }
         &Filesystem::Ext4{ref inode_size, ref reserved_blocks_percentage} => {
             let mut arg_list: Vec<String> = Vec::new();

@@ -15,3 +15,8 @@ description: |
 peers:
   server:
     interface: gluster
+storage:
+  brick:
+    type: block
+    multiple:
+      range: 1-

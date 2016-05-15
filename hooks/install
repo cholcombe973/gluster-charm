@@ -13,5 +13,5 @@ if is_centos
     apt-get update
 
     juju-log "Installing Gluster 3.7"
-    apt-get -y install nfs-common glusterfs-server xfsprogs
+    apt-get -y install nfs-common glusterfs-server
 fi

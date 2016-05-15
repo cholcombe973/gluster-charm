@@ -180,11 +180,14 @@ fn peers_are_ready(peers: Result<Vec<gluster::Peer>, gluster::GlusterError>) -> 
     return true;
 }
 
-
 // HDD's are so slow that sometimes the peers take long to join the cluster.
 // This will loop and wait for them ie spinlock
 fn wait_for_peers() -> Result<(), String> {
     juju::log(&"Waiting for all peers to enter the Peer in Cluster status".to_string());
+    try!(juju::status_set(juju::Status {
+             status_type: juju::StatusType::Maintenance,
+             message: "Waiting for all peers to enter the \"Peer in Cluster status\"".to_string(),
+         }).map_err(|e| e.to_string()));
     let mut iterations = 0;
     while !peers_are_ready(gluster::peer_status()) {
         thread::sleep(Duration::from_secs(1));
@@ -288,17 +291,20 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
     // Default to 3 replicas if the parsing fails
     let replica_config = get_config_value("replication_level").unwrap_or("3".to_string());
     let replicas = replica_config.parse().unwrap_or(3);
+    let mut brick_paths: Vec<String> = Vec::new();
 
-    let brick_path_config = match get_config_value("brick_paths") {
-        Ok(b) => b,
-        Err(e) => {
-            return Err(Status::InvalidConfig(format!("Unable to get brick_paths config value. {}", e)));
-        }
-    };
+    let bricks = juju::storage_list().unwrap();
+    juju::log(&format!("storage_list: {:?}", bricks));
 
-    let brick_paths: Vec<String> = brick_path_config.split(" ")
-                                                        .map(|s| s.to_string())
-                                                        .collect();
+    for brick in bricks.lines(){
+        //This is the /dev/ location.
+        let storage_location = juju::storage_get(brick.trim()).unwrap();
+        //Translate to mount location
+        let brick_path = PathBuf::from(storage_location.trim());
+        let mount_path = format!("/mnt/{}", brick_path.file_name().unwrap().to_string_lossy());
+
+        brick_paths.push(mount_path);
+    }
 
     if volume.is_none() {
         juju::log(&"Volume is none".to_string());
@@ -352,6 +358,10 @@ fn check_and_create_dir(path: &str) -> Result<(), String> {
             match e.kind() {
                 std::io::ErrorKind::NotFound => {
                     juju::log(&format!("Creating dir {}", path));
+                    try!(juju::status_set(juju::Status {
+                             status_type: juju::StatusType::Maintenance,
+                             message: format!("Creating dir {}", path),
+                         }).map_err(|e| e.to_string()));
                     try!(fs::create_dir(&path).map_err(|e| e.to_string()));
                     return Ok(());
                 }
@@ -361,131 +371,6 @@ fn check_and_create_dir(path: &str) -> Result<(), String> {
             }
         }
     }
-}
-
-// TODO: This blindly formats block devices and ignores what's on them.
-fn check_brick_list(bricks: &Vec<gluster::Brick>) -> Result<Vec<gluster::Brick>, String> {
-    let filesystem_config_value = try!(get_config_value("filesystem_type"));
-    let filesystem_type = block::FilesystemType::from_str(&filesystem_config_value);
-    let mut clean_bricks: Vec<gluster::Brick> = Vec::new();
-    for brick in bricks {
-        let block_check = block::is_block_device(&brick.path);
-
-        if block_check.is_ok() {
-
-            let dev_name = try!(brick.path
-                                     .file_name()
-                                     .ok_or(format!("Failed to get device name from {:?}",
-                                                    &brick.path)));
-            let dev_name_str = try!(dev_name.to_str()
-                                            .ok_or(format!("Failed to transform device name to \
-                                                            string {:?}",
-                                                           &dev_name)));
-
-            let mount_path = format!("/mnt/{}", dev_name_str);
-
-            juju::log(&format!("Gathering info on block device: {:?}", &brick.path));
-
-            // Format with the default XFS unless told otherwise
-            match filesystem_type {
-                block::FilesystemType::Xfs => {
-                    juju::log(&format!("Formatting block device with XFS: {:?}", &brick.path));
-                    try!(juju::status_set(juju::Status{
-                        status_type: juju::StatusType::Maintenance,
-                        message: format!("Formatting block device with XFS: {:?}", &brick.path),
-                    }).map_err(|e| e.to_string()));
-
-                    let filesystem_type = block::Filesystem::Xfs {
-                        inode_size: None,
-                        force: true,
-                    };
-                    try!(block::format_block_device(&brick.path, &filesystem_type)
-                             .map_err(|e| e.to_string()));
-                }
-                block::FilesystemType::Ext4 => {
-                    juju::log(&format!("Formatting block device with Ext4: {:?}", &brick.path));
-                    try!(juju::status_set(juju::Status {
-                             status_type: juju::StatusType::Maintenance,
-                             message: format!("Formatting block device with Ext4: {:?}",
-                                              &brick.path),
-                         })
-                             .map_err(|e| e.to_string()));
-
-                    let filesystem_type = block::Filesystem::Ext4 {
-                        inode_size: 0,
-                        reserved_blocks_percentage: 0,
-                    };
-                    try!(block::format_block_device(&brick.path, &filesystem_type)
-                             .map_err(|e| e.to_string()));
-                }
-                block::FilesystemType::Btrfs => {
-                    juju::log(&format!("Formatting block device with Btrfs: {:?}", &brick.path));
-                    try!(juju::status_set(juju::Status {
-                             status_type: juju::StatusType::Maintenance,
-                             message: format!("Formatting block device with Btrfs: {:?}",
-                                              &brick.path),
-                         })
-                             .map_err(|e| e.to_string()));
-
-                    let filesystem_type = block::Filesystem::Btrfs {
-                        leaf_size: 0,
-                        node_size: 0,
-                        metadata_profile: block::MetadataProfile::Single,
-                    };
-                    try!(block::format_block_device(&brick.path, &filesystem_type)
-                             .map_err(|e| e.to_string()));
-                }
-                _ => {
-                    juju::log(&format!("Formatting block device with XFS: {:?}", &brick.path));
-                    try!(juju::status_set(juju::Status{
-                        status_type: juju::StatusType::Maintenance,
-                        message: format!("Formatting block device with XFS: {:?}", &brick.path),
-                    }).map_err(|e| e.to_string()));
-
-                    let filesystem_type = block::Filesystem::Xfs {
-                        inode_size: None,
-                        force: true,
-                    };
-                    try!(block::format_block_device(&brick.path, &filesystem_type)
-                             .map_err(|e| e.to_string()));
-                }
-            }
-
-            // Update our block device info to reflect formatting
-            let device_info = try!(block::get_device_info(&brick.path).map_err(|e| e.to_string()));
-            juju::log(&format!("device_info: {:?}", device_info));
-            try!(check_and_create_dir(&mount_path));
-
-            juju::log(&format!("Mounting block device {:?} at {}", &brick.path, mount_path));
-            try!(juju::status_set(juju::Status {
-                     status_type: juju::StatusType::Maintenance,
-                     message: format!("Mounting block device {:?} at {}", &brick.path, mount_path),
-                 })
-                     .map_err(|e| e.to_string()));
-
-            try!(block::mount_device(&device_info, &mount_path).map_err(|e| e.to_string()));
-
-            // Modify the brick to point at the mnt point and add it to the clean list
-            clean_bricks.push(gluster::Brick {
-                peer: brick.peer.clone(),
-                path: PathBuf::from(mount_path),
-            });
-        } else {
-            let brick_path_str = try!(brick.path
-                                           .to_str()
-                                           .ok_or(format!("Failed to transform path to string \
-                                                           from {:?}",
-                                                          &brick.path)));
-
-            try!(check_and_create_dir(&brick_path_str));
-
-            clean_bricks.push(gluster::Brick {
-                peer: brick.peer.clone(),
-                path: brick.path.clone(),
-            });
-        }
-    }
-    return Ok(clean_bricks);
 }
 
 // Create a new volume if enough peers are available
@@ -514,6 +399,10 @@ fn create_volume(peers: &Vec<gluster::Peer>,
             match e{
                 Status::WaitForMorePeers => {
                     juju::log(&"Waiting for more peers".to_string());
+                    try!(juju::status_set(juju::Status {
+                             status_type: juju::StatusType::Maintenance,
+                             message: "Waiting for more peers".to_string(),
+                         }).map_err(|e| e.to_string()));
                     return Ok(0);
                 },
                 Status::InvalidConfig(config_err) => {
@@ -529,17 +418,17 @@ fn create_volume(peers: &Vec<gluster::Peer>,
     juju::log(&format!("Got brick list: {:?}", brick_list));
 
     // Check to make sure the bricks are formatted and mounted
-    let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
+    //let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
 
     juju::log(&format!("Creating volume of type {:?} with brick list {:?}",
                        cluster_type,
-                       clean_bricks));
+                       brick_list));
 
     match cluster_type {
         gluster::VolumeType::Distribute => {
             gluster::volume_create_distributed(&volume_name,
                                                gluster::Transport::Tcp,
-                                               clean_bricks,
+                                               brick_list,
                                                true)
                 .map_err(|e| e.to_string())
         }
@@ -547,7 +436,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
             gluster::volume_create_striped(&volume_name,
                                            3,
                                            gluster::Transport::Tcp,
-                                           clean_bricks,
+                                           brick_list,
                                            true)
                 .map_err(|e| e.to_string())
         }
@@ -555,7 +444,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
             gluster::volume_create_replicated(&volume_name,
                                               replicas,
                                               gluster::Transport::Tcp,
-                                              clean_bricks,
+                                              brick_list,
                                               true)
                 .map_err(|e| e.to_string())
         }
@@ -564,7 +453,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
                                                       3,
                                                       3,
                                                       gluster::Transport::Tcp,
-                                                      clean_bricks,
+                                                      brick_list,
                                                       true)
                 .map_err(|e| e.to_string())
         }
@@ -573,7 +462,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
                                            3,
                                            1,
                                            gluster::Transport::Tcp,
-                                           clean_bricks,
+                                           brick_list,
                                            true)
                 .map_err(|e| e.to_string())
         }
@@ -582,7 +471,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
             gluster::volume_create_striped(&volume_name,
                                            3,
                                            gluster::Transport::Tcp,
-                                           clean_bricks,
+                                           brick_list,
                                            true)
                 .map_err(|e| e.to_string())
         }
@@ -590,7 +479,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
             gluster::volume_create_replicated(&volume_name,
                                               3,
                                               gluster::Transport::Tcp,
-                                              clean_bricks,
+                                              brick_list,
                                               true)
                 .map_err(|e| e.to_string())
         }
@@ -599,7 +488,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
                                                       3,
                                                       3,
                                                       gluster::Transport::Tcp,
-                                                      clean_bricks,
+                                                      brick_list,
                                                       true)
                 .map_err(|e| e.to_string())
         }
@@ -609,7 +498,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
                 brick_list.len()-1, //TODO: This number has to be lower than the brick length
                 1,
                 gluster::Transport::Tcp,
-                clean_bricks,
+                brick_list,
                 true).map_err(|e| e.to_string()),
     }
 }
@@ -646,10 +535,10 @@ fn expand_volume(peers: Vec<gluster::Peer>,
     };
 
     // Check to make sure the bricks are formatted and mounted
-    let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
+    //let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
 
-    juju::log(&format!("Expanding volume with brick list: {:?}", clean_bricks));
-    match gluster::volume_add_brick(&volume_name, clean_bricks, true) {
+    juju::log(&format!("Expanding volume with brick list: {:?}", brick_list));
+    match gluster::volume_add_brick(&volume_name, brick_list, true) {
         Ok(o) => Ok(o),
         Err(e) => Err(e.to_string()),
     }
@@ -717,7 +606,6 @@ fn server_changed() -> Result<(), String> {
 
         // Everyone is in.  Lets see if a volume exists
         let volume_info = gluster::volume_info(&volume_name);
-        // juju::log(&format!("volume info for create/expand volume {:?}", volume_info));
         let existing_volume: bool;
         match volume_info {
             Ok(_) => {
@@ -757,17 +645,6 @@ fn server_changed() -> Result<(), String> {
                 return Err("Volume info command failed".to_string());
             }
         }
-        // Only set existing_volume to false if we have this specific error
-        // gluster::GlusterError::NoVolumesPresent => {
-        // existing_volume = false;
-        // }
-        // Otherwise something failed and lets return that error
-        // _ => {
-        // return Err(e.to_string());
-        // }
-        // }
-        // }
-        //
         if !existing_volume {
             juju::log(&format!("Creating volume {}", volume_name));
             try!(juju::status_set(juju::Status {
@@ -833,6 +710,99 @@ fn server_removed() -> Result<(), String> {
     return Ok(());
 }
 
+fn brick_attached() -> Result<(), String> {
+    let filesystem_config_value = try!(get_config_value("filesystem_type"));
+    let filesystem_type = block::FilesystemType::from_str(&filesystem_config_value);
+    //Format our bricks and mount them
+    let brick_location = try!(juju::storage_get_location().map_err(|e| e.to_string()));
+    let brick_path = PathBuf::from(brick_location.trim());
+    let mount_path = format!("/mnt/{}", brick_path.file_name().unwrap().to_string_lossy());
+
+    // Format with the default XFS unless told otherwise
+    match filesystem_type {
+        block::FilesystemType::Xfs => {
+            juju::log(&format!("Formatting block device with XFS: {:?}", &brick_path));
+            try!(juju::status_set(juju::Status{
+                status_type: juju::StatusType::Maintenance,
+                message: format!("Formatting block device with XFS: {:?}", &brick_path),
+            }).map_err(|e| e.to_string()));
+
+            let filesystem_type = block::Filesystem::Xfs {
+                inode_size: None,
+                force: true,
+            };
+            try!(block::format_block_device(&brick_path, &filesystem_type));
+        }
+        block::FilesystemType::Ext4 => {
+            juju::log(&format!("Formatting block device with Ext4: {:?}", &brick_path));
+            try!(juju::status_set(juju::Status {
+                     status_type: juju::StatusType::Maintenance,
+                     message: format!("Formatting block device with Ext4: {:?}",
+                                      &brick_path),
+                 })
+                     .map_err(|e| e.to_string()));
+
+            let filesystem_type = block::Filesystem::Ext4 {
+                inode_size: 0,
+                reserved_blocks_percentage: 0,
+            };
+            try!(block::format_block_device(&brick_path, &filesystem_type)
+                     .map_err(|e| e.to_string()));
+        }
+        block::FilesystemType::Btrfs => {
+            juju::log(&format!("Formatting block device with Btrfs: {:?}", &brick_path));
+            try!(juju::status_set(juju::Status {
+                     status_type: juju::StatusType::Maintenance,
+                     message: format!("Formatting block device with Btrfs: {:?}",
+                                      &brick_path),
+                 })
+                     .map_err(|e| e.to_string()));
+
+            let filesystem_type = block::Filesystem::Btrfs {
+                leaf_size: 0,
+                node_size: 0,
+                metadata_profile: block::MetadataProfile::Single,
+            };
+            try!(block::format_block_device(&brick_path, &filesystem_type)
+                     .map_err(|e| e.to_string()));
+        }
+        _ => {
+            juju::log(&format!("Formatting block device with XFS: {:?}", &brick_path));
+            try!(juju::status_set(juju::Status{
+                status_type: juju::StatusType::Maintenance,
+                message: format!("Formatting block device with XFS: {:?}", &brick_path),
+            }).map_err(|e| e.to_string()));
+
+            let filesystem_type = block::Filesystem::Xfs {
+                inode_size: None,
+                force: true,
+            };
+            try!(block::format_block_device(&brick_path, &filesystem_type)
+                     .map_err(|e| e.to_string()));
+        }
+    }
+    // Update our block device info to reflect formatting
+    let device_info = try!(block::get_device_info(&brick_path));
+    juju::log(&format!("device_info: {:?}", device_info));
+
+    juju::log(&format!("Mounting block device {:?} at {}", &brick_path, mount_path));
+    try!(juju::status_set(juju::Status {
+             status_type: juju::StatusType::Maintenance,
+             message: format!("Mounting block device {:?} at {}", &brick_path, mount_path),
+         })
+             .map_err(|e| e.to_string()));
+
+    try!(check_and_create_dir(&mount_path));
+
+    try!(block::mount_device(&device_info, &mount_path));
+    return Ok(());
+}
+
+fn brick_detached() -> Result<(), String> {
+    //TODO: Do nothing for now
+    return Ok(());
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() > 0 {
@@ -852,6 +822,16 @@ fn main() {
         hook_registry.push(juju::Hook {
             name: "server-relation-departed".to_string(),
             callback: Box::new(server_removed),
+        });
+
+        hook_registry.push(juju::Hook {
+            name: "brick-storage-attached".to_string(),
+            callback: Box::new(brick_attached),
+        });
+
+        hook_registry.push(juju::Hook {
+            name: "brick-storage-detaching".to_string(),
+            callback: Box::new(brick_detached),
         });
 
         let result = juju::process_hooks(args, hook_registry);
