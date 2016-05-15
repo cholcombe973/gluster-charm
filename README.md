@@ -13,10 +13,8 @@ performance for diverse workloads.
 The gluster charm has defaults in the config.yaml that you will want to change for production.
 Please note that volume_name, cluster_type, and replication_level are immutable options.  Changing them post
 deployment will have no effect.  
+This charm makes use of [juju storage](https://jujucharms.com/docs/1.25/storage).  Please read the docs to learn about adding block storage to your units.
 
-    brick_paths:
-        The directories that will be used for a storage device.  Does not have to
-        be a real hard drive but probably should be for anything production related.
     volume_name:
         Whatever name you would like to call your gluster volume.
     cluster_type:
@@ -51,11 +49,13 @@ If you would like debug flags enabled rebuild with: cargo build and cp target/de
 That should provide you with a binary.  
 
 # Configure
-Edit the config.yaml file in the charm's root directory if needed.
+Create a config.yaml file to set any options you would like to change from the defaults.
 
 # Deploy
+    Example EC2 deployment on Juju 1.25:
+    juju deploy cs:~xfactor973/xenial/gluster-1 -n 3 --config=~/gluster.yaml --storage brick=ebs,10G,2
 
-    juju deploy gluster
+    To scale out the service use this command:
     juju add-unit gluster
 
 (keep adding units to keep adding more bricks and storage)
@@ -63,7 +63,7 @@ Edit the config.yaml file in the charm's root directory if needed.
 # Testing
 For a simple test deploy 4 gluster units like so
 
-    juju deploy gluster -n 4
+    juju deploy gluster -n 4 --config=~/gluster.yaml --storage brick=local,10G
 
 Once the status is started the charm will bring both units together into a cluster and create a volume.  
 You will know the cluster is ready when you see a status of active.
