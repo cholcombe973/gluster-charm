@@ -3,8 +3,8 @@ name = "gluster-charm"
 version = "0.1.0"
 dependencies = [
  "gluster 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "itertools 0.4.13 (registry+https://github.com/rust-lang/crates.io-index)",
- "juju 0.2.1",
+ "itertools 0.4.15 (registry+https://github.com/rust-lang/crates.io-index)",
+ "juju 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libudev 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 0.1.69 (registry+https://github.com/rust-lang/crates.io-index)",
  "uuid 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -42,12 +42,13 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.4.13"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "juju"
-version = "0.2.1"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "kernel32-sys"
