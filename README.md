@@ -38,11 +38,14 @@ A rebuild would be required for other architectures.
 
 1. Install [rust](http://www.rust-lang.org/install.html) stable for your platform
 2. Install [cargo](https://crates.io/install)
-3. cd into the charm directory and run:
+3. Install libudev-dev as a dependency.
+4. cd into the charm directory and run:
 
         cargo build --release
 
-4. cp target/release/main hooks/main
+5. Copy the built target:
+
+        cp target/release/main hooks/main
 
 If you would like debug flags enabled rebuild with: cargo build and cp target/debug/main hooks/main
 
@@ -52,6 +55,9 @@ That should provide you with a binary.
 Create a config.yaml file to set any options you would like to change from the defaults.
 
 # Deploy
+This charm requires juju storage. It requires at least 1 block device.
+For more information please check out the [docs](https://jujucharms.com/docs/1.25/storage)
+
     Example EC2 deployment on Juju 1.25:
     juju deploy cs:~xfactor973/xenial/gluster-1 -n 3 --config=~/gluster.yaml --storage brick=ebs,10G,2
 
@@ -94,4 +100,4 @@ on the mount point to show that they are still available.
 For more information about Gluster and operation of a cluster please see: https://gluster.readthedocs.org/en/latest/
 For more immediate and interactive help please join IRC channel #gluster on Freenode.
 Gluster also has a users mailing list: https://www.gluster.org/mailman/listinfo/gluster-users
-For bugs concerning the Juju charm please file them on launchpad: https://launchpad.net/
+For bugs concerning the Juju charm please file them on [Github](https://github.com/cholcombe973/gluster-charm/tree/master)
