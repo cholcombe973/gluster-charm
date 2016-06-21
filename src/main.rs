@@ -700,6 +700,11 @@ fn server_changed() -> Result<(), String> {
                  .map_err(|e| e.to_string()));
         return Ok(());
     } else {
+        try!(juju::status_set(juju::Status {
+                 status_type: juju::StatusType::Active,
+                 message: "".to_string(),
+             })
+                 .map_err(|e| e.to_string()));
         return Ok(());
     }
 }
