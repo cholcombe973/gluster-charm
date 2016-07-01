@@ -1,6 +1,0 @@
-options:
-  volume_name: test2
-  brick_paths: /mnt/brick1 /mnt/brick2
-  cluster_type: StripedAndReplicate
-  replication_level: 3
-  filesystem_type: btrfs
