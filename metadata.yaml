@@ -15,6 +15,11 @@ description: |
 peers:
   server:
     interface: gluster
+provides:
+  fuse:
+    interface: gluster-fuse
+  nfs:
+    interface: gluster-nfs
 storage:
   brick:
     type: block

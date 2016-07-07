@@ -143,14 +143,12 @@ fn run_command(command: &str, arg_list: &Vec<String>, as_root: bool) -> Output {
     }
 }
 
-//Install xfsprogs, btrfs-tools, etc for mkfs to succeed
-fn install_utils()-> Result<i32, String>{
-    let arg_list = vec![
-        "install".to_string(),
-        "-y".to_string(),
-        "btrfs-tools".to_string(),
-        "xfsprogs".to_string()
-    ];
+// Install xfsprogs, btrfs-tools, etc for mkfs to succeed
+fn install_utils() -> Result<i32, String> {
+    let arg_list = vec!["install".to_string(),
+                        "-y".to_string(),
+                        "btrfs-tools".to_string(),
+                        "xfsprogs".to_string()];
     return process_output(run_command("/usr/bin/apt-get", &arg_list, true));
 }
 
@@ -192,7 +190,7 @@ fn process_output(output: Output) -> Result<i32, String> {
 
     if output.status.success() {
         Ok(0)
-    }else{
+    } else {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         Err(stderr)
     }
@@ -200,7 +198,7 @@ fn process_output(output: Output) -> Result<i32, String> {
 
 pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<i32, String> {
     match filesystem {
-        &Filesystem::Btrfs{ref metadata_profile, ref leaf_size, ref node_size} => {
+        &Filesystem::Btrfs { ref metadata_profile, ref leaf_size, ref node_size } => {
             let mut arg_list: Vec<String> = Vec::new();
 
             arg_list.push("-m".to_string());
@@ -213,9 +211,9 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
             arg_list.push(node_size.to_string());
 
             arg_list.push(device.to_string_lossy().to_string());
-            //Check if mkfs.xfs is installed
+            // Check if mkfs.xfs is installed
             match fs::metadata("/sbin/mkfs.btrfs") {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
                     match e.kind() {
                         ErrorKind::NotFound => {
@@ -227,7 +225,7 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
             }
             return process_output(run_command("mkfs.btrfs", &arg_list, true));
         }
-        &Filesystem::Xfs{ref inode_size, ref force} => {
+        &Filesystem::Xfs { ref inode_size, ref force } => {
             let mut arg_list: Vec<String> = Vec::new();
 
             if (*inode_size).is_some() {
@@ -241,9 +239,9 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
 
             arg_list.push(device.to_string_lossy().to_string());
 
-            //Check if mkfs.xfs is installed
+            // Check if mkfs.xfs is installed
             match fs::metadata("/sbin/mkfs.xfs") {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
                     match e.kind() {
                         ErrorKind::NotFound => {
@@ -255,7 +253,7 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
             }
             return process_output(run_command("/sbin/mkfs.xfs", &arg_list, true));
         }
-        &Filesystem::Ext4{ref inode_size, ref reserved_blocks_percentage} => {
+        &Filesystem::Ext4 { ref inode_size, ref reserved_blocks_percentage } => {
             let mut arg_list: Vec<String> = Vec::new();
 
             arg_list.push("-I".to_string());
@@ -341,8 +339,7 @@ pub fn is_block_device(device_path: &PathBuf) -> Result<bool, String> {
     let devices = try!(enumerator.scan_devices().map_err(|e| e.to_string()));
 
     let sysname = try!(device_path.file_name()
-                                  .ok_or(format!("Unable to get file_name on device {:?}",
-                                                 device_path)));
+        .ok_or(format!("Unable to get file_name on device {:?}", device_path)));
 
     for device in devices {
         if sysname == device.sysname() {
@@ -362,8 +359,7 @@ pub fn get_device_info(device_path: &PathBuf) -> Result<Device, String> {
     let devices = try!(enumerator.scan_devices().map_err(|e| e.to_string()));
 
     let sysname = try!(device_path.file_name()
-                                  .ok_or(format!("Unable to get file_name on device {:?}",
-                                                 device_path)));
+        .ok_or(format!("Unable to get file_name on device {:?}", device_path)));
 
     for device in devices {
         if sysname == device.sysname() {
