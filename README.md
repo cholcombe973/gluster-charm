@@ -59,7 +59,7 @@ This charm requires juju storage. It requires at least 1 block device.
 For more information please check out the [docs](https://jujucharms.com/docs/1.25/storage)
 
     Example EC2 deployment on Juju 1.25:
-    juju deploy cs:~xfactor973/xenial/gluster-1 -n 3 --config=~/gluster.yaml --storage brick=ebs,10G,2
+    juju deploy cs:~xfactor973/xenial/gluster-3 -n 3 --config=~/gluster.yaml --storage brick=ebs,10G,2
 
     To scale out the service use this command:
     juju add-unit gluster
