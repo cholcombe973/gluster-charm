@@ -5,13 +5,13 @@ source "$hooks_dir/helpers.sh"
 
 if is_centos
   then
-    juju-log "Installing Gluster 3.7"
+    juju-log "Installing Gluster 3.8"
     wget -P /etc/yum.repos.d http://download.gluster.org/pub/gluster/glusterfs/LATEST/RHEL/glusterfs-epel.repo
     yum install glusterfs-server
   else
-    apt-add-repository -y ppa:gluster/glusterfs-3.7
+    apt-add-repository -y ppa:gluster/glusterfs-3.8
     apt-get update
 
-    juju-log "Installing Gluster 3.7"
+    juju-log "Installing Gluster 3.8"
     apt-get -y install nfs-common glusterfs-server
 fi
