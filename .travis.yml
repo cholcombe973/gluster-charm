@@ -20,6 +20,7 @@ script:
       travis-cargo test
 
 after_success:
-  - travis-cargo coveralls --no-sudo
+  - travis-cargo coveralls --no-sudo --verify
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then ./kcov/build/src/kcov --verify --coveralls-id=$TRAVIS_JOB_ID --exclude-pattern=/.cargo target/kcov target/debug/gluster-charm-*; fi
 
 sudo: false
