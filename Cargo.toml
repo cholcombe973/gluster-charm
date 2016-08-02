@@ -4,14 +4,13 @@ version = "0.1.0"
 authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 
 [dependencies]
-gluster = {path="/home/chris/repos/gluster"}
+gluster = "*"
 itertools = "*"
 juju = "*"
 libc = "*"
 libudev = "*"
 log = "*"
 regex = "*"
-rustc-serialize = "*"
 uuid = { version = "*", features = ["v4"] }
 
 # The development profile, used for `cargo build`
