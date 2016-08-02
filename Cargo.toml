@@ -4,16 +4,12 @@ version = "0.1.0"
 authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 
 [dependencies]
-chrono = { version = "0.2", features = ["rustc-serialize"] }
-debian = "*"
-gluster = "*"
-init-daemon = "*"
+gluster = {path="/home/chris/repos/gluster"}
 itertools = "*"
 juju = "*"
 libc = "*"
 libudev = "*"
 log = "*"
-rand = "~0.3"
 regex = "*"
 rustc-serialize = "*"
 uuid = { version = "*", features = ["v4"] }

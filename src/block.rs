@@ -188,8 +188,7 @@ pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
 }
 
 fn process_output(output: Output) -> Result<i32, String> {
-    juju::log(&format!("Command output: {:?}", output),
-              Some(LogLevel::Debug));
+    juju::log(&format!("Command output: {:?}", output), Some(LogLevel::Debug));
 
     if output.status.success() {
         Ok(0)
