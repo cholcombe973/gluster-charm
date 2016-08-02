@@ -8,8 +8,9 @@ gluster = "*"
 itertools = "*"
 juju = "*"
 libudev = "*"
+log = "*"
 regex = "*"
-uuid = "*"
+uuid = { version = "*", features = ["v4"] }
 
 # The development profile, used for `cargo build`
 [profile.dev]

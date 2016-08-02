@@ -1,14 +1,15 @@
 extern crate juju;
 extern crate libudev;
 extern crate regex;
-extern crate uuid;
 use self::regex::Regex;
-use self::uuid::Uuid;
+use uuid::Uuid;
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+
+use log::LogLevel;
 
 // Formats a block device at Path p with XFS
 #[derive(Clone, Debug)]
@@ -85,7 +86,8 @@ pub enum Filesystem {
         reserved_blocks_percentage: u8,
     },
     Xfs {
-        // This is optional.  Boost knobs are on by default: http://xfs.org/index.php/XFS_FAQ#Q:_I_want_to_tune_my_XFS_filesystems_for_.3Csomething.3E
+        // This is optional.  Boost knobs are on by default:
+        // http://xfs.org/index.php/XFS_FAQ#Q:_I_want_to_tune_my_XFS_filesystems_for_.3Csomething.3E
         inode_size: Option<u64>,
         force: bool,
     },
@@ -186,7 +188,8 @@ pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
 }
 
 fn process_output(output: Output) -> Result<i32, String> {
-    juju::log(&format!("Command output: {:?}", output));
+    juju::log(&format!("Command output: {:?}", output),
+              Some(LogLevel::Debug));
 
     if output.status.success() {
         Ok(0)

@@ -2,7 +2,10 @@ mod block;
 
 extern crate gluster;
 extern crate itertools;
+#[macro_use]
 extern crate juju;
+extern crate log;
+extern crate uuid;
 
 use itertools::Itertools;
 use std::env;
@@ -13,6 +16,7 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
+use log::LogLevel;
 // A gluster server has either joined or left this cluster
 //
 
@@ -28,10 +32,46 @@ use std::time::Duration;
 
 #[cfg(test)]
 mod tests {
-    extern crate uuid;
+    // extern crate uuid;
     use std::fs::File;
     use std::io::prelude::Read;
-    use self::uuid::Uuid;
+    use super::gluster;
+    use super::uuid;
+
+    #[test]
+    fn test_all_peers_are_ready() {
+        let peers: Vec<gluster::Peer> = vec![gluster::Peer {
+                                                 uuid: uuid::Uuid::new_v4(),
+                                                 hostname: format!("host-{}", uuid::Uuid::new_v4()),
+                                                 status: gluster::State::PeerInCluster,
+                                             },
+                                             gluster::Peer {
+                                                 uuid: uuid::Uuid::new_v4(),
+                                                 hostname: format!("host-{}", uuid::Uuid::new_v4()),
+                                                 status: gluster::State::PeerInCluster,
+                                             }];
+        let ready = super::peers_are_ready(Ok(peers));
+        println!("Peers are ready: {}", ready);
+        assert!(ready);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_some_peers_are_ready() {
+        let peers: Vec<gluster::Peer> = vec![gluster::Peer {
+                                                 uuid: uuid::Uuid::new_v4(),
+                                                 hostname: format!("host-{}", uuid::Uuid::new_v4()),
+                                                 status: gluster::State::Connected,
+                                             },
+                                             gluster::Peer {
+                                                 uuid: uuid::Uuid::new_v4(),
+                                                 hostname: format!("host-{}", uuid::Uuid::new_v4()),
+                                                 status: gluster::State::PeerInCluster,
+                                             }];
+        let ready = super::peers_are_ready(Ok(peers));
+        println!("Some peers are ready: {}", ready);
+        assert!(ready);
+    }
 
     // #[test]
     // fn generate_test_peers(amount: usize)->Vec<gluster::Peer>{
@@ -164,26 +204,26 @@ fn peers_are_ready(peers: Result<Vec<gluster::Peer>, gluster::GlusterError>) -> 
         return false;
     }
 
-    juju::log(&format!("Got peer status: {:?}", peers));
+    juju::log(&format!("Got peer status: {:?}", peers),
+              Some(LogLevel::Debug));
     let result = match peers {
         Ok(result) => result,
         Err(err) => {
-            juju::log(&format!("peers_are_ready failed to get peer status: {:?}", err));
+            juju::log(&format!("peers_are_ready failed to get peer status: {:?}", err),
+                      Some(LogLevel::Error));
             return false;
         }
     };
-    for peer in result {
-        if peer.status != gluster::State::PeerInCluster {
-            return false;
-        }
-    }
-    return true;
+
+    // Ensure all peers are in a PeerInCluster state
+    result.iter().all(|peer| peer.status == gluster::State::PeerInCluster)
 }
 
 // HDD's are so slow that sometimes the peers take long to join the cluster.
 // This will loop and wait for them ie spinlock
 fn wait_for_peers() -> Result<(), String> {
-    juju::log(&"Waiting for all peers to enter the Peer in Cluster status".to_string());
+    juju::log(&"Waiting for all peers to enter the Peer in Cluster status".to_string(),
+              Some(LogLevel::Debug));
     try!(juju::status_set(juju::Status {
             status_type: juju::StatusType::Maintenance,
             message: "Waiting for all peers to enter the \"Peer in Cluster status\"".to_string(),
@@ -215,7 +255,8 @@ fn probe_in_units(existing_peers: &Vec<gluster::Peer>,
                   related_units: Vec<juju::Relation>)
                   -> Result<(), String> {
 
-    juju::log(&format!("Adding in related_units: {:?}", related_units));
+    juju::log(&format!("Adding in related_units: {:?}", related_units),
+              Some(LogLevel::Debug));
     for unit in related_units {
         let address = try!(juju::relation_get_by_unit(&"private-address".to_string(), &unit)
             .map_err(|e| e.to_string()));
@@ -232,11 +273,16 @@ fn probe_in_units(existing_peers: &Vec<gluster::Peer>,
 
         // Probe the peer in
         if !already_probed {
-            juju::log(&format!("Adding {} to cluster", &address_trimmed));
+            juju::log(&format!("Adding {} to cluster", &address_trimmed),
+                      Some(LogLevel::Debug));
             match gluster::peer_probe(&address_trimmed) {
-                Ok(_) => juju::log(&"Gluster peer probe was successful".to_string()),
+                Ok(_) => {
+                    juju::log(&"Gluster peer probe was successful".to_string(),
+                              Some(LogLevel::Debug))
+                }
                 Err(why) => {
-                    juju::log(&format!("Gluster peer probe failed: {:?}", why));
+                    juju::log(&format!("Gluster peer probe failed: {:?}", why),
+                              Some(LogLevel::Error));
                     return Err(why.to_string());
                 }
             };
@@ -297,7 +343,8 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
     let mut brick_paths: Vec<String> = Vec::new();
 
     let bricks = juju::storage_list().unwrap();
-    juju::log(&format!("storage_list: {:?}", bricks));
+    juju::log(&format!("storage_list: {:?}", bricks),
+              Some(LogLevel::Debug));
 
     for brick in bricks.lines() {
         // This is the /dev/ location.
@@ -310,17 +357,19 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
     }
 
     if volume.is_none() {
-        juju::log(&"Volume is none".to_string());
+        juju::log(&"Volume is none".to_string(), Some(LogLevel::Debug));
         // number of bricks % replicas == 0 then we're ok to proceed
         if peers.len() < replicas {
             // Not enough peers to replicate across
             juju::log(&"Not enough peers to satisfy the replication level for the Gluster \
                         volume.  Waiting for more peers to join."
-                .to_string());
+                          .to_string(),
+                      Some(LogLevel::Debug));
             return Err(Status::WaitForMorePeers);
         } else if peers.len() == replicas {
             // Case 1: A perfect marriage of peers and number of replicas
-            juju::log(&"Number of peers and number of replicas match".to_string());
+            juju::log(&"Number of peers and number of replicas match".to_string(),
+                      Some(LogLevel::Debug));
             return Ok(brick_and_server_cartesian_product(peers, &brick_paths));
         } else {
             // Case 2: We have a mismatch of replicas and hosts
@@ -330,24 +379,29 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
 
             // Drop these peers off the end of the list
             new_peers.truncate(count);
-            juju::log(&format!("Too many new peers.  Dropping {} peers off the list", count));
+            juju::log(&format!("Too many new peers.  Dropping {} peers off the list", count),
+                      Some(LogLevel::Debug));
             return Ok(brick_and_server_cartesian_product(&new_peers, &brick_paths));
         }
     } else {
         // Existing volume.  Build a differential list.
-        juju::log(&"Existing volume.  Building differential brick list".to_string());
+        juju::log(&"Existing volume.  Building differential brick list".to_string(),
+                  Some(LogLevel::Debug));
         let mut new_peers = find_new_peers(peers, &volume.unwrap());
 
         if new_peers.len() < replicas {
-            juju::log(&"New peers found are less than needed by the replica count".to_string());
+            juju::log(&"New peers found are less than needed by the replica count".to_string(),
+                      Some(LogLevel::Debug));
             return Err(Status::WaitForMorePeers);
         } else if new_peers.len() == replicas {
-            juju::log(&"New peers and number of replicas match".to_string());
+            juju::log(&"New peers and number of replicas match".to_string(),
+                      Some(LogLevel::Debug));
             return Ok(brick_and_server_cartesian_product(&new_peers, &brick_paths));
         } else {
             let count = new_peers.len() - (new_peers.len() % replicas);
             // Drop these peers off the end of the list
-            juju::log(&format!("Too many new peers.  Dropping {} peers off the list", count));
+            juju::log(&format!("Too many new peers.  Dropping {} peers off the list", count),
+                      Some(LogLevel::Debug));
             new_peers.truncate(count);
             return Ok(brick_and_server_cartesian_product(&new_peers, &brick_paths));
         }
@@ -360,7 +414,7 @@ fn check_and_create_dir(path: &str) -> Result<(), String> {
         Err(e) => {
             match e.kind() {
                 std::io::ErrorKind::NotFound => {
-                    juju::log(&format!("Creating dir {}", path));
+                    juju::log(&format!("Creating dir {}", path), Some(LogLevel::Debug));
                     try!(juju::status_set(juju::Status {
                             status_type: juju::StatusType::Maintenance,
                             message: format!("Creating dir {}", path),
@@ -389,7 +443,8 @@ fn create_volume(peers: &Vec<gluster::Peer>,
         Err(e) => {
             juju::log(&format!("Invalid config value for replicas.  Defaulting to 3. Error was \
                                 {}",
-                               e));
+                               e),
+                      Some(LogLevel::Error));
             3
         }
     };
@@ -404,7 +459,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
         Err(e) => {
             match e {
                 Status::WaitForMorePeers => {
-                    juju::log(&"Waiting for more peers".to_string());
+                    juju::log(&"Waiting for more peers".to_string(), Some(LogLevel::Info));
                     try!(juju::status_set(juju::Status {
                             status_type: juju::StatusType::Maintenance,
                             message: "Waiting for more peers".to_string(),
@@ -422,14 +477,16 @@ fn create_volume(peers: &Vec<gluster::Peer>,
             }
         }
     };
-    juju::log(&format!("Got brick list: {:?}", brick_list));
+    juju::log(&format!("Got brick list: {:?}", brick_list),
+              Some(LogLevel::Debug));
 
     // Check to make sure the bricks are formatted and mounted
     // let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
 
     juju::log(&format!("Creating volume of type {:?} with brick list {:?}",
                        cluster_type,
-                       brick_list));
+                       brick_list),
+              Some(LogLevel::Info));
 
     match cluster_type {
         gluster::VolumeType::Distribute => {
@@ -519,7 +576,8 @@ fn expand_volume(peers: Vec<gluster::Peer>,
 
     // Are there new peers?
     juju::log(&format!("Checking for new peers to expand the volume named {}",
-                       volume_name));
+                       volume_name),
+              Some(LogLevel::Debug));
 
     // Build the brick list
     let brick_list = match get_brick_list(&peers, volume_info) {
@@ -527,7 +585,7 @@ fn expand_volume(peers: Vec<gluster::Peer>,
         Err(e) => {
             match e {
                 Status::WaitForMorePeers => {
-                    juju::log(&"Waiting for more peers".to_string());
+                    juju::log(&"Waiting for more peers".to_string(), Some(LogLevel::Info));
                     return Ok(0);
                 }
                 Status::InvalidConfig(config_err) => {
@@ -544,7 +602,8 @@ fn expand_volume(peers: Vec<gluster::Peer>,
     // Check to make sure the bricks are formatted and mounted
     // let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
 
-    juju::log(&format!("Expanding volume with brick list: {:?}", brick_list));
+    juju::log(&format!("Expanding volume with brick list: {:?}", brick_list),
+              Some(LogLevel::Info));
     match gluster::volume_add_brick(&volume_name, brick_list, true) {
         Ok(o) => Ok(o),
         Err(e) => Err(e.to_string()),
@@ -554,7 +613,8 @@ fn expand_volume(peers: Vec<gluster::Peer>,
 fn shrink_volume(peer: gluster::Peer, volume_info: Option<gluster::Volume>) -> Result<i32, String> {
     let volume_name = try!(get_config_value("volume_name"));
 
-    juju::log(&format!("Shrinking volume named  {}", volume_name));
+    juju::log(&format!("Shrinking volume named  {}", volume_name),
+              Some(LogLevel::Info));
 
     let peers: Vec<gluster::Peer> = vec![peer];
 
@@ -564,7 +624,7 @@ fn shrink_volume(peer: gluster::Peer, volume_info: Option<gluster::Volume>) -> R
         Err(e) => {
             match e {
                 Status::WaitForMorePeers => {
-                    juju::log(&"Waiting for more peers".to_string());
+                    juju::log(&"Waiting for more peers".to_string(), Some(LogLevel::Info));
                     return Ok(0);
                 }
                 Status::InvalidConfig(config_err) => {
@@ -578,7 +638,8 @@ fn shrink_volume(peer: gluster::Peer, volume_info: Option<gluster::Volume>) -> R
         }
     };
 
-    juju::log(&format!("Shrinking volume with brick list: {:?}", brick_list));
+    juju::log(&format!("Shrinking volume with brick list: {:?}", brick_list),
+              Some(LogLevel::Info));
     match gluster::volume_remove_brick(&volume_name, brick_list, true) {
         Ok(o) => Ok(o),
         Err(e) => Err(e.to_string()),
@@ -591,8 +652,9 @@ fn server_changed() -> Result<(), String> {
     let volume_name = try!(get_config_value("volume_name"));
 
     if leader {
-        juju::log(&format!("I am the leader: {}", context.relation_id));
-        juju::log(&"Loading config".to_string());
+        juju::log(&format!("I am the leader: {}", context.relation_id),
+                  Some(LogLevel::Debug));
+        juju::log(&"Loading config".to_string(), Some(LogLevel::Info));
 
         let mut f = try!(File::open("config.yaml").map_err(|e| e.to_string()));
         let mut s = String::new();
@@ -605,7 +667,7 @@ fn server_changed() -> Result<(), String> {
             .map_err(|e| e.to_string()));
 
         let mut peers = try!(gluster::peer_list().map_err(|e| e.to_string()));
-        juju::log(&format!("peer list: {:?}", peers));
+        juju::log(&format!("peer list: {:?}", peers), Some(LogLevel::Debug));
         let related_units = try!(juju::relation_list().map_err(|e| e.to_string()));
         try!(probe_in_units(&peers, related_units));
         // Update our peer list
@@ -616,7 +678,8 @@ fn server_changed() -> Result<(), String> {
         let existing_volume: bool;
         match volume_info {
             Ok(_) => {
-                juju::log(&format!("Expading volume {}", volume_name));
+                juju::log(&format!("Expading volume {}", volume_name),
+                          Some(LogLevel::Info));
                 try!(juju::status_set(juju::Status {
                         status_type: juju::StatusType::Maintenance,
                         message: format!("Expanding volume {}", volume_name),
@@ -625,7 +688,8 @@ fn server_changed() -> Result<(), String> {
 
                 match expand_volume(peers, volume_info.ok()) {
                     Ok(v) => {
-                        juju::log(&format!("Expand volume succeeded.  Return code: {}", v));
+                        juju::log(&format!("Expand volume succeeded.  Return code: {}", v),
+                                  Some(LogLevel::Info));
                         try!(juju::status_set(juju::Status {
                                 status_type: juju::StatusType::Active,
                                 message: "Expand volume succeeded.".to_string(),
@@ -634,7 +698,8 @@ fn server_changed() -> Result<(), String> {
                         return Ok(());
                     }
                     Err(e) => {
-                        juju::log(&format!("Expand volume failed with output: {}", e));
+                        juju::log(&format!("Expand volume failed with output: {}", e),
+                                  Some(LogLevel::Error));
                         try!(juju::status_set(juju::Status {
                                 status_type: juju::StatusType::Blocked,
                                 message: "Expand volume failed.  Please check juju debug-log."
@@ -653,7 +718,8 @@ fn server_changed() -> Result<(), String> {
             }
         }
         if !existing_volume {
-            juju::log(&format!("Creating volume {}", volume_name));
+            juju::log(&format!("Creating volume {}", volume_name),
+                      Some(LogLevel::Info));
             try!(juju::status_set(juju::Status {
                     status_type: juju::StatusType::Maintenance,
                     message: format!("Creating volume {}", volume_name),
@@ -661,7 +727,8 @@ fn server_changed() -> Result<(), String> {
                 .map_err(|e| e.to_string()));
             match create_volume(&peers, None) {
                 Ok(_) => {
-                    juju::log(&"Create volume succeeded.".to_string());
+                    juju::log(&"Create volume succeeded.".to_string(),
+                              Some(LogLevel::Info));
                     try!(juju::status_set(juju::Status {
                             status_type: juju::StatusType::Maintenance,
                             message: "Create volume succeeded".to_string(),
@@ -669,7 +736,8 @@ fn server_changed() -> Result<(), String> {
                         .map_err(|e| e.to_string()));
                 }
                 Err(e) => {
-                    juju::log(&format!("Create volume failed with output: {}", e));
+                    juju::log(&format!("Create volume failed with output: {}", e),
+                              Some(LogLevel::Error));
                     try!(juju::status_set(juju::Status {
                             status_type: juju::StatusType::Blocked,
                             message: "Create volume failed.  Please check juju debug-log."
@@ -681,7 +749,8 @@ fn server_changed() -> Result<(), String> {
             }
             match gluster::volume_start(&volume_name, false) {
                 Ok(_) => {
-                    juju::log(&"Starting volume succeeded.".to_string());
+                    juju::log(&"Starting volume succeeded.".to_string(),
+                              Some(LogLevel::Info));
                     try!(juju::status_set(juju::Status {
                             status_type: juju::StatusType::Active,
                             message: "Starting volume succeeded.".to_string(),
@@ -689,7 +758,8 @@ fn server_changed() -> Result<(), String> {
                         .map_err(|e| e.to_string()));
                 }
                 Err(e) => {
-                    juju::log(&format!("Start volume failed with output: {:?}", e));
+                    juju::log(&format!("Start volume failed with output: {:?}", e),
+                              Some(LogLevel::Error));
                     try!(juju::status_set(juju::Status {
                             status_type: juju::StatusType::Blocked,
                             message: "Start volume failed.  Please check juju debug-log."
@@ -718,7 +788,8 @@ fn server_changed() -> Result<(), String> {
 
 fn server_removed() -> Result<(), String> {
     let private_address = try!(juju::unit_get_private_addr().map_err(|e| e.to_string()));
-    juju::log(&format!("Removing server: {}", private_address));
+    juju::log(&format!("Removing server: {}", private_address),
+              Some(LogLevel::Info));
     return Ok(());
 }
 
@@ -733,7 +804,8 @@ fn brick_attached() -> Result<(), String> {
     // Format with the default XFS unless told otherwise
     match filesystem_type {
         block::FilesystemType::Xfs => {
-            juju::log(&format!("Formatting block device with XFS: {:?}", &brick_path));
+            juju::log(&format!("Formatting block device with XFS: {:?}", &brick_path),
+                      Some(LogLevel::Info));
             try!(juju::status_set(juju::Status {
                     status_type: juju::StatusType::Maintenance,
                     message: format!("Formatting block device with XFS: {:?}", &brick_path),
@@ -747,7 +819,8 @@ fn brick_attached() -> Result<(), String> {
             try!(block::format_block_device(&brick_path, &filesystem_type));
         }
         block::FilesystemType::Ext4 => {
-            juju::log(&format!("Formatting block device with Ext4: {:?}", &brick_path));
+            juju::log(&format!("Formatting block device with Ext4: {:?}", &brick_path),
+                      Some(LogLevel::Info));
             try!(juju::status_set(juju::Status {
                     status_type: juju::StatusType::Maintenance,
                     message: format!("Formatting block device with Ext4: {:?}", &brick_path),
@@ -762,7 +835,8 @@ fn brick_attached() -> Result<(), String> {
                 .map_err(|e| e.to_string()));
         }
         block::FilesystemType::Btrfs => {
-            juju::log(&format!("Formatting block device with Btrfs: {:?}", &brick_path));
+            juju::log(&format!("Formatting block device with Btrfs: {:?}", &brick_path),
+                      Some(LogLevel::Info));
             try!(juju::status_set(juju::Status {
                     status_type: juju::StatusType::Maintenance,
                     message: format!("Formatting block device with Btrfs: {:?}", &brick_path),
@@ -778,7 +852,8 @@ fn brick_attached() -> Result<(), String> {
                 .map_err(|e| e.to_string()));
         }
         _ => {
-            juju::log(&format!("Formatting block device with XFS: {:?}", &brick_path));
+            juju::log(&format!("Formatting block device with XFS: {:?}", &brick_path),
+                      Some(LogLevel::Info));
             try!(juju::status_set(juju::Status {
                     status_type: juju::StatusType::Maintenance,
                     message: format!("Formatting block device with XFS: {:?}", &brick_path),
@@ -795,9 +870,11 @@ fn brick_attached() -> Result<(), String> {
     }
     // Update our block device info to reflect formatting
     let device_info = try!(block::get_device_info(&brick_path));
-    juju::log(&format!("device_info: {:?}", device_info));
+    juju::log(&format!("device_info: {:?}", device_info),
+              Some(LogLevel::Info));
 
-    juju::log(&format!("Mounting block device {:?} at {}", &brick_path, mount_path));
+    juju::log(&format!("Mounting block device {:?} at {}", &brick_path, mount_path),
+              Some(LogLevel::Info));
     try!(juju::status_set(juju::Status {
             status_type: juju::StatusType::Maintenance,
             message: format!("Mounting block device {:?} at {}", &brick_path, mount_path),
@@ -831,48 +908,22 @@ fn nfs_relation_joined() -> Result<(), String> {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() > 0 {
-        let mut hook_registry: Vec<juju::Hook> = Vec::new();
-
         // Register our hooks with the Juju library
-        hook_registry.push(juju::Hook {
-            name: "config-changed".to_string(),
-            callback: Box::new(config_changed),
-        });
+        let hook_registry: Vec<juju::Hook> = vec![
+            hook!("config-changed", config_changed),
+            hook!("server-relation-changed", server_changed),
+            hook!("server-relation-departed", server_removed),
+            hook!("brick-storage-attached", brick_attached),
+            hook!("brick-storage-detaching", brick_detached),
+            hook!("fuse-relation-joined", fuse_relation_joined),
+            hook!("nfs-relation-joined", nfs_relation_joined),
+        ];
 
-        hook_registry.push(juju::Hook {
-            name: "server-relation-changed".to_string(),
-            callback: Box::new(server_changed),
-        });
-
-        hook_registry.push(juju::Hook {
-            name: "server-relation-departed".to_string(),
-            callback: Box::new(server_removed),
-        });
-
-        hook_registry.push(juju::Hook {
-            name: "brick-storage-attached".to_string(),
-            callback: Box::new(brick_attached),
-        });
-
-        hook_registry.push(juju::Hook {
-            name: "brick-storage-detaching".to_string(),
-            callback: Box::new(brick_detached),
-        });
-
-        hook_registry.push(juju::Hook {
-            name: "fuse-relation-joined".to_string(),
-            callback: Box::new(fuse_relation_joined),
-        });
-
-        hook_registry.push(juju::Hook {
-            name: "nfs-relation-joined".to_string(),
-            callback: Box::new(nfs_relation_joined),
-        });
-
-        let result = juju::process_hooks(args, hook_registry);
+        let result = juju::process_hooks(hook_registry);
 
         if result.is_err() {
-            juju::log(&format!("Hook failed with error: {:?}", result.err()));
+            juju::log(&format!("Hook failed with error: {:?}", result.err()),
+                      Some(LogLevel::Error));
         }
     }
 }
