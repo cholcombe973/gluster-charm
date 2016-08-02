@@ -35,6 +35,7 @@ mod tests {
     // extern crate uuid;
     use std::fs::File;
     use std::io::prelude::Read;
+    use std::path::PathBuf;
     use super::gluster;
     use super::uuid;
 
@@ -71,6 +72,76 @@ mod tests {
         let ready = super::peers_are_ready(Ok(peers));
         println!("Some peers are ready: {}", ready);
         assert!(ready);
+    }
+
+    #[test]
+    fn test_find_new_peers() {
+        let peer1 = gluster::Peer {
+            uuid: uuid::Uuid::new_v4(),
+            hostname: format!("host-{}", uuid::Uuid::new_v4()),
+            status: gluster::State::PeerInCluster,
+        };
+        let peer2 = gluster::Peer {
+            uuid: uuid::Uuid::new_v4(),
+            hostname: format!("host-{}", uuid::Uuid::new_v4()),
+            status: gluster::State::PeerInCluster,
+        };
+
+        // peer1 and peer2 are in the cluster but only peer1 is actually serving a brick.
+        // find_new_peers should return peer2 as a new peer
+        let peers: Vec<gluster::Peer> = vec![peer1.clone(), peer2.clone()];
+        let existing_brick = gluster::Brick {
+            peer: peer1,
+            path: PathBuf::from("/mnt/brick1"),
+        };
+
+        let volume_info = gluster::Volume {
+            name: "Test".to_string(),
+            vol_type: gluster::VolumeType::Replicate,
+            id: uuid::Uuid::new_v4(),
+            status: "online".to_string(),
+            transport: gluster::Transport::Tcp,
+            bricks: vec![existing_brick],
+        };
+        let new_peers = super::find_new_peers(&peers, &volume_info);
+        assert_eq!(new_peers, vec![peer2]);
+    }
+
+    #[test]
+    fn test_cartesian_product() {
+        let peer1 = gluster::Peer {
+            uuid: uuid::Uuid::new_v4(),
+            hostname: format!("host-{}", uuid::Uuid::new_v4()),
+            status: gluster::State::PeerInCluster,
+        };
+        let peer2 = gluster::Peer {
+            uuid: uuid::Uuid::new_v4(),
+            hostname: format!("host-{}", uuid::Uuid::new_v4()),
+            status: gluster::State::PeerInCluster,
+        };
+        let peers = vec![peer1.clone(), peer2.clone()];
+        let paths = vec!["/mnt/brick1".to_string(), "/mnt/brick2".to_string()];
+        let result = super::brick_and_server_cartesian_product(&peers, &paths);
+        println!("brick_and_server_cartesian_product: {:?}", result);
+        assert_eq!(result,
+                   vec![
+                       gluster::Brick{
+                            peer: peer1.clone(),
+                            path: PathBuf::from("/mnt/brick1"),
+                        },
+                        gluster::Brick{
+                            peer: peer2.clone(),
+                            path: PathBuf::from("/mnt/brick1"),
+                        },
+                        gluster::Brick{
+                            peer: peer1.clone(),
+                            path: PathBuf::from("/mnt/brick2"),
+                        },
+                        gluster::Brick{
+                            peer: peer2.clone(),
+                            path: PathBuf::from("/mnt/brick2"),
+                        },
+                    ]);
     }
 
     // #[test]

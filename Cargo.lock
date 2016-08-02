@@ -2,7 +2,7 @@
 name = "gluster-charm"
 version = "0.1.0"
 dependencies = [
- "gluster 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gluster 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.4.16 (registry+https://github.com/rust-lang/crates.io-index)",
  "juju 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "libudev 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "gluster"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "byteorder 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
