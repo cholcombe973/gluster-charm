@@ -1,3 +1,4 @@
+mod actions;
 mod block;
 
 extern crate gluster;
@@ -6,6 +7,8 @@ extern crate itertools;
 extern crate juju;
 extern crate log;
 extern crate uuid;
+
+use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas};
 
 use itertools::Itertools;
 use std::env;
@@ -33,6 +36,7 @@ use log::LogLevel;
 #[cfg(test)]
 mod tests {
     // extern crate uuid;
+    use std::collections::BTreeMap;
     use std::fs::File;
     use std::io::prelude::Read;
     use std::path::PathBuf;
@@ -102,6 +106,7 @@ mod tests {
             status: "online".to_string(),
             transport: gluster::Transport::Tcp,
             bricks: vec![existing_brick],
+            options: BTreeMap::new(),
         };
         let new_peers = super::find_new_peers(&peers, &volume_info);
         assert_eq!(new_peers, vec![peer2]);
@@ -883,6 +888,9 @@ fn main() {
     if args.len() > 0 {
         // Register our hooks with the Juju library
         let hook_registry: Vec<juju::Hook> = vec![
+            hook!("create-volume-quota", enable_volume_quota),
+            hook!("delete-volume-quota", disable_volume_quota),
+            hook!("list-volume-quotas", list_volume_quotas),
             hook!("config-changed", config_changed),
             hook!("server-relation-changed", server_changed),
             hook!("server-relation-departed", server_removed),
