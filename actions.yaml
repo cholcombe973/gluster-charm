@@ -1,0 +1,41 @@
+create-volume-quota:
+  description: |
+    Directory quotas in GlusterFS allows you to set limits on usage of the disk
+    space by volumes.
+  params:
+    volume:
+      type: string
+      description: The volume to enable this quota on
+    usage-limit:
+      type: integer
+      description: The MB limit of the quota for this volume.
+    path:
+      type: string
+      description: The path to limit the usage on.  Defaults to /
+      default: "/"
+  required: [volume, usage-limit]
+  additionalProperties: false
+delete-volume-quota:
+  description: |
+    Directory quotas in GlusterFS allows you to set limits on usage of the disk
+    space by volumes.
+  params:
+    volume:
+      type: string
+      description: The volume to disable this quota on
+    path:
+      type: string
+      description: The path to remove the limit on.  Defaults to /
+      default: "/"
+  required: [volume]
+  additionalProperties: false
+list-volume-quotas:
+  description: |
+    Directory quotas in GlusterFS allows you to set limits on usage of the disk
+    space by volumes.
+  params:
+    volume:
+      type: string
+      description: The volume to list quotas on
+  required: [volume]
+  additionalProperties: false
