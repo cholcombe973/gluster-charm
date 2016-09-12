@@ -118,3 +118,13 @@ pub fn list_volume_quotas() -> Result<(), String> {
         return Ok(());
     }
 }
+
+pub fn set_volume_options() -> Result<(), String> {
+    let options = try!(juju::action_get_all().map_err(|e| e.to_string()));
+    for (key, value) in options {
+    }
+    gluster::volume_set_option(volume_name, settings: Vec<GlusterOption>)
+
+    juju::log(&format!("options: {:?}", options), Some(LogLevel::Debug));
+    return Ok(());
+}

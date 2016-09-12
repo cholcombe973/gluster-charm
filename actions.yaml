@@ -39,3 +39,269 @@ list-volume-quotas:
       description: The volume to list quotas on
   required: [volume]
   additionalProperties: false
+set-volume-options:
+  description: |
+    You can tune volume options, as needed, while the cluster is online
+    and available.
+  params:
+    volume:
+      type: string
+      description: The volume to set the option on
+    auth-allow:
+      type: string
+      description: |
+        IP addresses of the clients which should be allowed to access the
+        volume. Valid IP address which includes wild card patterns including *,
+        such as 192.168.1.*
+    auth-reject:
+      type: string
+      description: |
+        IP addresses of the clients which should be denied to access the volume.
+        Valid IP address which includes wild card patterns including *,
+        such as 192.168.1.*
+    client-grace-timeout:
+      type: integer
+      description: |
+        Specifies the duration for the lock state to be maintained on the
+        client after a network disconnection.
+      minimum: 10
+      maximum: 1800
+    cluster-self-heal-window-size:
+      type: integer
+      description: |
+        Specifies the maximum number of blocks per file on which self-heal
+        would happen simultaneously.
+      minimum: 0
+      maximum: 1025
+    cluster-data-self-heal-algorithm:
+      description: |
+        Specifies the type of self-heal. If you set the option as "full",
+        the entire file is copied from source to destinations. If the option
+        is set to "diff" the file blocks that are not in sync are copied to
+        destinations. Reset uses a heuristic model. If the file does not exist
+        on one of the subvolumes, or a zero-byte file exists (created by
+        entry self-heal) the entire content has to be copied anyway, so there
+        is no benefit from using the "diff" algorithm. If the file size is
+        about the same as page size, the entire file can be read and written
+        with a few operations, which will be faster than "diff" which has to
+        read checksums and then read and write.
+      type: string
+      enum: [full,diff,reset]
+    cluster-min-free-disk:
+      type: integer
+      description: |
+        Specifies the percentage of disk space that must be kept free.
+        Might be useful for non-uniform bricks
+      minimum: 0
+      maximum: 100
+    cluster-stripe-block-size:
+      type: integer
+      description: |
+        Specifies the size of the stripe unit that will be read from or written
+        to.
+    cluster-self-heal-daemon:
+      type: string
+      description: |
+        Allows you to turn-off proactive self-heal on replicated
+      enum: [on,off]
+    cluster-ensure-durability:
+      type: string
+      description: |
+        This option makes sure the data/metadata is durable across abrupt
+        shutdown of the brick.
+      enum: [on,off]
+    diagnostics-brick-log-level:
+      type: string
+      description: |
+        Changes the log-level of the bricks.
+      enum: [debug,warning,error,none,trace,critical]
+    diagnostics-client-log-level:
+      type: string
+      description: |
+        Changes the log-level of the clients.
+      enum: [debug,warning,error,none,trace,critical]
+    diagnostics-latency-measurement:
+      type: string
+      description: |
+        Statistics related to the latency of each operation would be tracked.
+      enum: [on,off]
+    diagnostics-dump-fd-stats:
+      type: string
+      description: |
+        Statistics related to file-operations would be tracked.
+      enum: [on,off]
+    features-read-only:
+      type: string
+      description: |
+        Enables you to mount the entire volume as read-only for all the
+        clients (including NFS clients) accessing it.
+      enum: [on,off]
+    features-lock-heal:
+      type: string
+      description: |
+        Enables self-healing of locks when the network disconnects.
+      enum: [on,off]
+    features-quota-timeout:
+      type: integer
+      description: |
+        For performance reasons, quota caches the directory sizes on client.
+        You can set timeout indicating the maximum duration of directory sizes
+        in cache, from the time they are populated, during which they are
+        considered valid
+      minimum: 0
+      maximum: 3600
+    geo-replication.indexing:
+      type: string
+      description: |
+        Use this option to automatically sync the changes in the filesystem
+        from Master to Slave.
+      enum: [on,off]
+    nfs-enable-ino32:
+      type: string
+      description: |
+        For 32-bit nfs clients or applications that do not support 64-bit
+        inode numbers or large files, use this option from the CLI to make
+        Gluster NFS return 32-bit inode numbers instead of 64-bit inode numbers.
+      enum: [on,off]
+    nfs-volume-access:
+      type: string
+      description: |
+        Set the access type for the specified sub-volume.
+      enum: [read-write,read-only]
+    nfs-trusted-write:
+      type: string
+      description: |
+        If there is an UNSTABLE write from the client, STABLE flag will be
+        returned to force the client to not send a COMMIT request. In some
+        environments, combined with a replicated GlusterFS setup, this option
+        can improve write performance. This flag allows users to trust Gluster
+        replication logic to sync data to the disks and recover when required.
+        COMMIT requests if received will be handled in a default manner by
+        fsyncing. STABLE writes are still handled in a sync manner.
+      enum: [on,off]
+    nfs-trusted-sync:
+      type: string
+      description: |
+        All writes and COMMIT requests are treated as async. This implies that
+        no write requests are guaranteed to be on server disks when the write
+        reply is received at the NFS client. Trusted sync includes
+        trusted-write behavior.
+      enum: [on,off]
+    nfs-export-dir:
+      type: string
+      description: |
+        This option can be used to export specified comma separated
+        subdirectories in the volume. The path must be an absolute path.
+        Along with path allowed list of IPs/hostname can be associated with
+        each subdirectory. If provided connection will allowed only from these
+        IPs. Format: \<dir>[(hostspec[hostspec...])][,...]. Where hostspec can
+        be an IP address, hostname or an IP range in CIDR notation. Note: Care
+        must be taken while configuring this option as invalid entries and/or
+        unreachable DNS servers can introduce unwanted delay in all the mount
+        calls.
+    nfs-export-volumes:
+      type: string
+      description: |
+        Enable/Disable exporting entire volumes, instead if used in
+        conjunction with nfs3.export-dir, can allow setting up only
+        subdirectories as exports.
+      enum: [on,off]
+    nfs-rpc-auth-unix:
+      type: string
+      description: |
+        Enable/Disable the AUTH_UNIX authentication type. This option is
+        enabled by default for better interoperability. However, you can
+        disable it if required.
+      enum: [on,off]
+    nfs-rpc-auth-null:
+      type: string
+      description: |
+        Enable/Disable the AUTH_NULL authentication type. It is not recommended
+        to change the default value for this option.
+      enum: [on,off]
+    nfs-ports-insecure:
+      type: string
+      description: |
+        Allow client connections from unprivileged ports. By default only
+        privileged ports are allowed. This is a global setting in case insecure
+        ports are to be enabled for all exports using a single option.
+      enum: [on,off]
+    nfs-addr-namelookup:
+      type: string
+      description: |
+        Turn-off name lookup for incoming client connections using this option.
+        In some setups, the name server can take too long to reply to DNS
+        queries resulting in timeouts of mount requests. Use this option to
+        turn off name lookups during address authentication. Note, turning this
+        off will prevent you from using hostnames in rpc-auth.addr.* filters.
+      enum: [on,off]
+    nfs-register-with-portmap:
+      type: string
+      description: |
+        For systems that need to run multiple NFS servers, you need to prevent
+        more than one from registering with portmap service. Use this option to
+        turn off portmap registration for Gluster NFS.
+      enum: [on,off]
+    nfs-disable:
+      type: string
+      description: |
+        Turn-off volume being exported by NFS
+      enum: [on,off]
+    performance-write-behind-window-size:
+      type: integer
+      description: |
+        Size of the per-file write-behind buffer.
+    performance-io-thread-count:
+      type: integer
+      description: |
+        The number of threads in IO threads translator.
+      minimum: 0
+      maximum: 65
+    performance-flush-behind:
+      type: string
+      description: |
+        If this option is set ON, instructs write-behind translator to perform
+        flush in background, by returning success (or any errors, if any of
+        previous writes were failed) to application even before flush is sent
+        to backend filesystem.
+      enum: [on,off]
+    performance-cache-max-file-size:
+      type: integer
+      description: |
+        Sets the maximum file size cached by the io-cache translator. Can use
+        the normal size descriptors of KB, MB, GB,TB or PB (for example, 6GB).
+        Maximum size uint64.
+    performance-cache-min-file-size:
+      type: integer
+      description: |
+        Sets the minimum file size cached by the io-cache translator. Values
+        same as "max" above
+    performance-cache-refresh-timeout:
+      type: integer
+      description: |
+        The cached data for a file will be retained till 'cache-refresh-timeout'
+        seconds, after which data re-validation is performed.
+      minimum: 0
+      maximum: 61
+    performance-cache-size:
+      type: integer
+      description: |
+        Size of the read cache in bytes
+    server-allow-insecure:
+      type: string
+      description: |
+        Allow client connections from unprivileged ports. By default only
+        privileged ports are allowed. This is a global setting in case insecure
+        ports are to be enabled for all exports using a single option.
+      enum: [on,off]
+    server-grace-timeout:
+      type: integer
+      description: |
+        Specifies the duration for the lock state to be maintained on the server
+        after a network disconnection.
+      minimum: 10
+      maximum: 1800
+    server-statedump-path:
+      type: string
+      description: |
+        Location of the state dump file.
