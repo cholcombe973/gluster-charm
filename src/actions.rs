@@ -118,3 +118,8 @@ pub fn list_volume_quotas() -> Result<(), String> {
         return Ok(());
     }
 }
+
+pub fn set_volume_options() -> Result<(), String> {
+    // let options = juju::
+    return Ok(());
+}
