@@ -124,7 +124,6 @@ pub fn set_volume_options() -> Result<(), String> {
     for (key, value) in options {
     }
     gluster::volume_set_option(volume_name, settings: Vec<GlusterOption>)
-
     juju::log(&format!("options: {:?}", options), Some(LogLevel::Debug));
     return Ok(());
 }
