@@ -26,6 +26,7 @@ options:
       Generally 2 or 3 will be fine for almost all use cases.  Greater than 3
       could be useful for read heavy uses cases.
   filesystem_type:
+    type: string
     default: xfs
     description: |
       The filesystem type to use for each one of the bricks.  Can be either

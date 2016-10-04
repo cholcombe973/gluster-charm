@@ -8,7 +8,7 @@ extern crate juju;
 extern crate log;
 extern crate uuid;
 
-use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas};
+use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
 
 use itertools::Itertools;
 use std::env;
@@ -888,6 +888,7 @@ fn main() {
     if args.len() > 0 {
         // Register our hooks with the Juju library
         let hook_registry: Vec<juju::Hook> = vec![
+            hook!("set-volume-options", set_volume_options),
             hook!("create-volume-quota", enable_volume_quota),
             hook!("delete-volume-quota", disable_volume_quota),
             hook!("list-volume-quotas", list_volume_quotas),

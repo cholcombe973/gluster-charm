@@ -118,3 +118,23 @@ pub fn list_volume_quotas() -> Result<(), String> {
         return Ok(());
     }
 }
+
+pub fn set_volume_options() -> Result<(), String> {
+    // volume is a required parameter so this should be safe
+    let mut volume: String = String::new();
+
+    // Gather all of the action parameters up at once.  We don't know what
+    // the user wants to change.
+    let options = try!(juju::action_get_all().map_err(|e| e.to_string()));
+    let mut settings: Vec<gluster::GlusterOption> = Vec::new();
+    for (key, value) in options {
+        if key != "volume" {
+            settings.push(try!(gluster::GlusterOption::from_str(&key, value)
+                .map_err(|e| e.to_string())));
+        } else {
+            volume = value;
+        }
+    }
+    try!(gluster::volume_set_options(&volume, settings).map_err(|e| e.to_string()));
+    return Ok(());
+}
