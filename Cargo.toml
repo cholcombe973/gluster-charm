@@ -4,11 +4,9 @@ version = "0.1.0"
 authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 
 [dependencies]
-# gluster = "*"
-gluster = {path = "/home/chris/repos/Gluster"}
+gluster = "*"
 itertools = "*"
-# juju = "*"
-juju = {path = "/home/chris/repos/juju"}
+juju = "*"
 libudev = "*"
 log = "*"
 regex = "*"

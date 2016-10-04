@@ -59,13 +59,6 @@ set-volume-options:
         IP addresses of the clients which should be denied to access the volume.
         Valid IP address which includes wild card patterns including *,
         such as 192.168.1.*
-    client-grace-timeout:
-      type: integer
-      description: |
-        Specifies the duration for the lock state to be maintained on the
-        client after a network disconnection.
-      minimum: 10
-      maximum: 1800
     cluster-self-heal-window-size:
       type: integer
       description: |
@@ -100,16 +93,14 @@ set-volume-options:
         Specifies the size of the stripe unit that will be read from or written
         to.
     cluster-self-heal-daemon:
-      type: string
+      type: boolean
       description: |
         Allows you to turn-off proactive self-heal on replicated
-      enum: [on,off]
     cluster-ensure-durability:
-      type: string
+      type: boolean
       description: |
         This option makes sure the data/metadata is durable across abrupt
         shutdown of the brick.
-      enum: [on,off]
     diagnostics-brick-log-level:
       type: string
       description: |
@@ -121,26 +112,22 @@ set-volume-options:
         Changes the log-level of the clients.
       enum: [debug,warning,error,none,trace,critical]
     diagnostics-latency-measurement:
-      type: string
+      type: boolean
       description: |
         Statistics related to the latency of each operation would be tracked.
-      enum: [on,off]
     diagnostics-dump-fd-stats:
-      type: string
+      type: boolean
       description: |
         Statistics related to file-operations would be tracked.
-      enum: [on,off]
     features-read-only:
-      type: string
+      type: boolean
       description: |
         Enables you to mount the entire volume as read-only for all the
         clients (including NFS clients) accessing it.
-      enum: [on,off]
     features-lock-heal:
-      type: string
+      type: boolean
       description: |
         Enables self-healing of locks when the network disconnects.
-      enum: [on,off]
     features-quota-timeout:
       type: integer
       description: |
@@ -150,26 +137,24 @@ set-volume-options:
         considered valid
       minimum: 0
       maximum: 3600
-    geo-replication.indexing:
-      type: string
+    geo-replication-indexing:
+      type: boolean
       description: |
         Use this option to automatically sync the changes in the filesystem
         from Master to Slave.
-      enum: [on,off]
     nfs-enable-ino32:
-      type: string
+      type: boolean
       description: |
         For 32-bit nfs clients or applications that do not support 64-bit
         inode numbers or large files, use this option from the CLI to make
         Gluster NFS return 32-bit inode numbers instead of 64-bit inode numbers.
-      enum: [on,off]
     nfs-volume-access:
       type: string
       description: |
         Set the access type for the specified sub-volume.
       enum: [read-write,read-only]
     nfs-trusted-write:
-      type: string
+      type: boolean
       description: |
         If there is an UNSTABLE write from the client, STABLE flag will be
         returned to force the client to not send a COMMIT request. In some
@@ -178,15 +163,13 @@ set-volume-options:
         replication logic to sync data to the disks and recover when required.
         COMMIT requests if received will be handled in a default manner by
         fsyncing. STABLE writes are still handled in a sync manner.
-      enum: [on,off]
     nfs-trusted-sync:
-      type: string
+      type: boolean
       description: |
         All writes and COMMIT requests are treated as async. This implies that
         no write requests are guaranteed to be on server disks when the write
         reply is received at the NFS client. Trusted sync includes
         trusted-write behavior.
-      enum: [on,off]
     nfs-export-dir:
       type: string
       description: |
@@ -200,53 +183,46 @@ set-volume-options:
         unreachable DNS servers can introduce unwanted delay in all the mount
         calls.
     nfs-export-volumes:
-      type: string
+      type: boolean
       description: |
         Enable/Disable exporting entire volumes, instead if used in
         conjunction with nfs3.export-dir, can allow setting up only
         subdirectories as exports.
-      enum: [on,off]
     nfs-rpc-auth-unix:
-      type: string
+      type: boolean
       description: |
         Enable/Disable the AUTH_UNIX authentication type. This option is
         enabled by default for better interoperability. However, you can
         disable it if required.
-      enum: [on,off]
     nfs-rpc-auth-null:
-      type: string
+      type: boolean
       description: |
         Enable/Disable the AUTH_NULL authentication type. It is not recommended
         to change the default value for this option.
-      enum: [on,off]
     nfs-ports-insecure:
-      type: string
+      type: boolean
       description: |
         Allow client connections from unprivileged ports. By default only
         privileged ports are allowed. This is a global setting in case insecure
         ports are to be enabled for all exports using a single option.
-      enum: [on,off]
     nfs-addr-namelookup:
-      type: string
+      type: boolean
       description: |
         Turn-off name lookup for incoming client connections using this option.
         In some setups, the name server can take too long to reply to DNS
         queries resulting in timeouts of mount requests. Use this option to
         turn off name lookups during address authentication. Note, turning this
         off will prevent you from using hostnames in rpc-auth.addr.* filters.
-      enum: [on,off]
     nfs-register-with-portmap:
-      type: string
+      type: boolean
       description: |
         For systems that need to run multiple NFS servers, you need to prevent
         more than one from registering with portmap service. Use this option to
         turn off portmap registration for Gluster NFS.
-      enum: [on,off]
     nfs-disable:
-      type: string
+      type: boolean
       description: |
         Turn-off volume being exported by NFS
-      enum: [on,off]
     performance-write-behind-window-size:
       type: integer
       description: |
@@ -258,13 +234,12 @@ set-volume-options:
       minimum: 0
       maximum: 65
     performance-flush-behind:
-      type: string
+      type: boolean
       description: |
         If this option is set ON, instructs write-behind translator to perform
         flush in background, by returning success (or any errors, if any of
         previous writes were failed) to application even before flush is sent
         to backend filesystem.
-      enum: [on,off]
     performance-cache-max-file-size:
       type: integer
       description: |
@@ -288,12 +263,11 @@ set-volume-options:
       description: |
         Size of the read cache in bytes
     server-allow-insecure:
-      type: string
+      type: boolean
       description: |
         Allow client connections from unprivileged ports. By default only
         privileged ports are allowed. This is a global setting in case insecure
         ports are to be enabled for all exports using a single option.
-      enum: [on,off]
     server-grace-timeout:
       type: integer
       description: |
@@ -305,3 +279,5 @@ set-volume-options:
       type: string
       description: |
         Location of the state dump file.
+  required: [volume]
+  additionalProperties: false
