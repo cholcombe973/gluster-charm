@@ -61,7 +61,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_some_peers_are_ready() {
         let peers: Vec<gluster::Peer> = vec![gluster::Peer {
                                                  uuid: uuid::Uuid::new_v4(),
@@ -75,7 +74,7 @@ mod tests {
                                              }];
         let ready = super::peers_are_ready(Ok(peers));
         println!("Some peers are ready: {}", ready);
-        assert!(ready);
+        assert_eq!(ready, false);
     }
 
     #[test]
