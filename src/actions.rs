@@ -11,7 +11,7 @@ pub fn enable_volume_quota() -> Result<(), String> {
         Ok(v) => v,
         Err(e) => {
             // Notify the user of the failure and then return the error up the stack
-            try!(juju::action_fail(&e.to_string()).map_err(|e| e.to_string()));
+            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
             return Err(e.to_string());
         }
     };
@@ -19,28 +19,28 @@ pub fn enable_volume_quota() -> Result<(), String> {
         Ok(usage) => usage,
         Err(e) => {
             // Notify the user of the failure and then return the error up the stack
-            try!(juju::action_fail(&e.to_string()).map_err(|e| e.to_string()));
+            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
             return Err(e.to_string());
         }
     };
-    let parsed_usage_limit = try!(u64::from_str(&usage_limit).map_err(|e| e.to_string()));
+    let parsed_usage_limit = u64::from_str(&usage_limit).map_err(|e| e.to_string())?;
     let path = match juju::action_get("path") {
         Ok(p) => p,
         Err(e) => {
             // Notify the user of the failure and then return the error up the stack
-            try!(juju::action_fail(&e.to_string()).map_err(|e| e.to_string()));
+            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
             return Err(e.to_string());
         }
     };
 
     // Turn quotas on if not already enabled
-    let quotas_enabled = try!(gluster::volume_quotas_enabled(&volume).map_err(|e| e.to_string()));
+    let quotas_enabled = gluster::volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
     if !quotas_enabled {
-        try!(gluster::volume_enable_quotas(&volume).map_err(|e| e.to_string()));
+        gluster::volume_enable_quotas(&volume).map_err(|e| e.to_string())?;
     }
 
-    try!(gluster::volume_add_quota(&volume, PathBuf::from(path), parsed_usage_limit)
-        .map_err(|e| e.to_string()));
+    gluster::volume_add_quota(&volume, PathBuf::from(path), parsed_usage_limit)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -50,7 +50,7 @@ pub fn disable_volume_quota() -> Result<(), String> {
         Ok(v) => v,
         Err(e) => {
             // Notify the user of the failure and then return the error up the stack
-            try!(juju::action_fail(&e.to_string()).map_err(|e| e.to_string()));
+            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
             return Err(e.to_string());
         }
     };
@@ -58,18 +58,18 @@ pub fn disable_volume_quota() -> Result<(), String> {
         Ok(p) => p,
         Err(e) => {
             // Notify the user of the failure and then return the error up the stack
-            try!(juju::action_fail(&e.to_string()).map_err(|e| e.to_string()));
+            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
             return Err(e.to_string());
         }
     };
 
-    let quotas_enabled = try!(gluster::volume_quotas_enabled(&volume).map_err(|e| e.to_string()));
+    let quotas_enabled = gluster::volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
     if quotas_enabled {
         match gluster::volume_remove_quota(&volume, PathBuf::from(path)) {
             Ok(_) => return Ok(()),
             Err(e) => {
                 // Notify the user of the failure and then return the error up the stack
-                try!(juju::action_fail(&e.to_string()).map_err(|e| e.to_string()));
+                juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
                 return Err(e.to_string());
             }
         }
@@ -86,11 +86,11 @@ pub fn list_volume_quotas() -> Result<(), String> {
             // Notify the user of the failure and then return the error up the stack
             juju::log(&format!("Failed to get volume param: {:?}", e),
                       Some(LogLevel::Debug));
-            try!(juju::action_fail(&e.to_string()).map_err(|e| e.to_string()));
+            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
             return Err(e.to_string());
         }
     };
-    let quotas_enabled = try!(gluster::volume_quotas_enabled(&volume).map_err(|e| e.to_string()));
+    let quotas_enabled = gluster::volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
     if quotas_enabled {
         match gluster::quota_list(&volume) {
             Ok(quotas) => {
@@ -102,8 +102,7 @@ pub fn list_volume_quotas() -> Result<(), String> {
                                 quota.used)
                     })
                     .collect();
-                try!(juju::action_set("quotas", &quota_string.join("\n"))
-                    .map_err(|e| e.to_string()));
+                juju::action_set("quotas", &quota_string.join("\n")).map_err(|e| e.to_string())?;
                 return Ok(());
             }
             Err(e) => {
@@ -125,7 +124,7 @@ pub fn set_volume_options() -> Result<(), String> {
 
     // Gather all of the action parameters up at once.  We don't know what
     // the user wants to change.
-    let options = try!(juju::action_get_all().map_err(|e| e.to_string()));
+    let options = juju::action_get_all().map_err(|e| e.to_string())?;
     let mut settings: Vec<gluster::GlusterOption> = Vec::new();
     for (key, value) in options {
         if key != "volume" {
@@ -135,6 +134,6 @@ pub fn set_volume_options() -> Result<(), String> {
             volume = value;
         }
     }
-    try!(gluster::volume_set_options(&volume, settings).map_err(|e| e.to_string()));
+    gluster::volume_set_options(&volume, settings).map_err(|e| e.to_string())?;
     return Ok(());
 }
