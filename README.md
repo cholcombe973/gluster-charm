@@ -66,6 +66,18 @@ For more information please check out the [docs](https://jujucharms.com/docs/1.2
 
 (keep adding units to keep adding more bricks and storage)
 
+# Scale Out
+Note that during scale out operation if your cluster has existing files on there they will not
+be migrated to the new bricks until a gluster volume rebalance start operation is performed.
+This operation can slow client traffic so it is left up to the administrator to perform
+at the appropriate time.
+
+# Rolling Upgrades
+The config.yaml source option is used to kick off a rolling upgrade of your cluster.
+The current behavior is to install the new packages on the server and upgrade it one by
+one.  A UUID sorted order is used to define the upgrade order.  Please note that replica 3
+is required to use rolling upgrades.  With replica 2 it's possible to have split brain issues.
+
 # Testing
 For a simple test deploy 4 gluster units like so
 

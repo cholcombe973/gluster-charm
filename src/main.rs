@@ -1,6 +1,9 @@
 mod actions;
+mod apt;
 mod block;
+mod upgrade;
 
+extern crate debian;
 extern crate gluster;
 extern crate itertools;
 #[macro_use]
@@ -10,28 +13,19 @@ extern crate uuid;
 
 use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
 
-use itertools::Itertools;
 use std::env;
 use std::fs;
-use std::fs::File;
+use std::fs::{create_dir, File};
 use std::io::prelude::Read;
-use std::path::PathBuf;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
+use debian::version::Version;
+use itertools::Itertools;
 use log::LogLevel;
-// A gluster server has either joined or left this cluster
-//
 
-// #[derive(Debug)]
-// struct Config{
-// volume_name: String,
-// brick_paths: Vec<String>,
-// cluster_type: gluster::VolumeType,
-// replicas: usize,
-// filesystem_type: block::FilesystemType,
-// }
-//
 
 #[cfg(test)]
 mod tests {
@@ -169,11 +163,51 @@ fn get_config_value(name: &str) -> Result<String, String> {
 }
 
 fn config_changed() -> Result<(), String> {
-    // load the config again
-    // let new_config = parse_config(&s);
-
-    // how do we figure out what changed?
+    check_for_upgrade()?;
     return Ok(());
+}
+
+// If the config has changed this will initiated a rolling upgrade
+fn check_for_upgrade() -> Result<(), String> {
+    let config = juju::Config::new().map_err(|e| e.to_string())?;
+    if !config.changed("source").map_err(|e| e.to_string())? {
+        // No upgrade requested
+        juju::log(&"No upgrade requested", Some(LogLevel::Debug));
+        return Ok(());
+    }
+
+    juju::log(&"Getting current_version", Some(LogLevel::Debug));
+    let current_version = get_glusterfs_version()?;
+
+    juju::log(&"Adding new source line", Some(LogLevel::Debug));
+    let source = juju::config_get("source").map_err(|e| e.to_string())?;
+    apt::add_source(&source)?;
+    juju::log(&"Calling apt update", Some(LogLevel::Debug));
+    apt::apt_update()?;
+
+    juju::log(&"Getting proposed_version", Some(LogLevel::Debug));
+    let proposed_version = apt::get_candidate_package_version("glusterfs-server")?;
+
+    // Using semantic versioning if the new version is greater than we allow the upgrade
+    if proposed_version > current_version {
+        juju::log(&format!("current_version: {}", current_version),
+                  Some(LogLevel::Debug));
+        juju::log(&format!("new_version: {}", proposed_version),
+                  Some(LogLevel::Debug));
+        juju::log(&format!("{} to {} is a valid upgrade path.  Proceeding.",
+                           current_version,
+                           proposed_version),
+                  Some(LogLevel::Debug));
+        return upgrade::roll_cluster(&proposed_version);
+    } else {
+        // Log a helpful error message
+        juju::log(&format!("Invalid upgrade path from {} to {}. The new version needs to be \
+                            greater than the old version",
+                           current_version,
+                           proposed_version),
+                  Some(LogLevel::Error));
+        return Ok(());
+    }
 }
 
 fn peers_are_ready(peers: Result<Vec<gluster::Peer>, gluster::GlusterError>) -> bool {
@@ -651,7 +685,7 @@ fn server_changed() -> Result<(), String> {
         let existing_volume: bool;
         match volume_info {
             Ok(_) => {
-                juju::log(&format!("Expading volume {}", volume_name),
+                juju::log(&format!("Expanding volume {}", volume_name),
                           Some(LogLevel::Info));
                 juju::status_set(juju::Status {
                         status_type: juju::StatusType::Maintenance,
@@ -666,6 +700,8 @@ fn server_changed() -> Result<(), String> {
                                 status_type: juju::StatusType::Active,
                                 message: "Expand volume succeeded.".to_string(),
                             }).map_err(|e| e.to_string())?;
+                        // Ensure the cluster is mounted
+                        mount_cluster(&volume_name)?;
                         return Ok(());
                     }
                     Err(e) => {
@@ -722,6 +758,9 @@ fn server_changed() -> Result<(), String> {
                             status_type: juju::StatusType::Active,
                             message: "Starting volume succeeded.".to_string(),
                         }).map_err(|e| e.to_string())?;
+                    mount_cluster(&volume_name)?;
+                    // Update the juju status
+                    update_status()?;
                 }
                 Err(e) => {
                     juju::log(&format!("Start volume failed with output: {:?}", e),
@@ -735,10 +774,6 @@ fn server_changed() -> Result<(), String> {
                 }
             };
         }
-        juju::status_set(juju::Status {
-                status_type: juju::StatusType::Active,
-                message: "".to_string(),
-            }).map_err(|e| e.to_string())?;
         return Ok(());
     } else {
         juju::status_set(juju::Status {
@@ -869,9 +904,9 @@ fn nfs_relation_joined() -> Result<(), String> {
     return Ok(());
 }
 
-fn get_glusterfs_version() -> Result<String, String> {
-    let mut cmd = std::process::Command::new("apt-cache");
-    cmd.arg("show");
+fn get_glusterfs_version() -> Result<Version, String> {
+    let mut cmd = std::process::Command::new("dpkg");
+    cmd.arg("-s");
     cmd.arg("glusterfs-server");
     let output = cmd.output().map_err(|e| e.to_string())?;
     if output.status.success() {
@@ -881,7 +916,8 @@ fn get_glusterfs_version() -> Result<String, String> {
                 // return the version
                 let parts: Vec<&str> = line.split(" ").collect();
                 if parts.len() == 2 {
-                    return Ok(parts[1].to_string());
+                    let parse_version = Version::parse(&parts[1]).map_err(|e| e.msg)?;
+                    return Ok(parse_version);
                 } else {
                     return Err(format!("apt-cache Verion string is invalid: {}", line));
                 }
@@ -893,13 +929,62 @@ fn get_glusterfs_version() -> Result<String, String> {
     return Err("Unable to find glusterfs-server version".to_string());
 }
 
+fn is_mounted(directory: &str) -> Result<bool, String> {
+    let path = Path::new(directory);
+    let parent = path.parent();
+
+    let dir_metadata = try!(fs::metadata(directory).map_err(|e| e.to_string()));
+    let file_type = dir_metadata.file_type();
+
+    if file_type.is_symlink() {
+        // A symlink can never be a mount point
+        return Ok(false);
+    }
+
+    if parent.is_some() {
+        let parent_metadata = try!(fs::metadata(parent.unwrap()).map_err(|e| e.to_string()));
+        if parent_metadata.dev() != dir_metadata.dev() {
+            // path/.. on a different device as path
+            return Ok(true);
+        }
+    } else {
+        // If the directory doesn't have a parent it's the root filesystem
+        return Ok(false);
+    }
+    return Ok(false);
+}
+
+// Mount the cluster at /mnt/glusterfs using fuse
+fn mount_cluster(volume_name: &str) -> Result<(), String> {
+    if !Path::new("/mnt/glusterfs").exists() {
+        create_dir("/mnt/glusterfs").map_err(|e| e.to_string())?;
+    }
+    if !is_mounted("/mnt/glusterfs")? {
+        let mut cmd = std::process::Command::new("mount");
+        cmd.arg("-t");
+        cmd.arg("glusterfs");
+        cmd.arg(&format!("localhost:/{}", volume_name));
+        cmd.arg("/mnt/glusterfs");
+        let output = cmd.output().map_err(|e| e.to_string())?;
+        if output.status.success() {
+            return Ok(());
+        } else {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+    }
+    return Ok(());
+}
+
 // Update the juju status information
 fn update_status() -> Result<(), String> {
     let version = get_glusterfs_version()?;
-    juju::application_version_set(&version).map_err(|e| e.to_string())?;
+    juju::application_version_set(
+        &format!("{}", version.upstream_version)).map_err(|e| e.to_string())?;
 
-    let context = juju::Context::new_from_env();
     let volume_name = get_config_value("volume_name")?;
+
+    // Ensure the cluster is mounted
+    mount_cluster(&volume_name)?;
 
     let volume_info = gluster::volume_info(&volume_name);
     match volume_info {
