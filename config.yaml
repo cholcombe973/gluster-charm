@@ -50,3 +50,26 @@ options:
     description: |
       Key ID to import to the apt keyring to support use with arbitary source
       configuration from outside of Launchpad archives or PPA's.
+  virtual_ip_addresses:
+    type: string
+    description: |
+      By default NFSv3 is installed and started on all servers.  If the server
+      the client is connected to dies NFSv3 doesn't have a failover mechanism.
+      Setting this option to a space separated list of ip addresses cidr's to be
+      used as virtual ip addresses on the cluster such as:
+        - 10.0.0.6/24 10.0.0.7/24 10.0.0.8/24 10.0.0.9/24
+          With a cluster of 2 machines would assign 2 virutal addresses
+          to each host.
+        - 2001:0db8:85a3:0000:0000:8a2e:0370:7334/24 2001:cdba:0000:0000:0000:0000:3257:9652/24
+          With a cluster of 2 machines would assign 1 virtual address to each
+          host.
+      Each server will be assigned (# of ip addresses) / ( # of servers) ip
+      addresses to use for quick failover.  The administrator is expected
+      to create a DNS A record with the virtual ip addresses before setting
+      this.  When clients connect to this charm it will attempt to resolve
+      its own virtual ip and hand out the DNS address instead of the ip
+      address if possible.  Upon failure of a server ctdb will issue a
+      gratitous arp requests and migrate the virtual ip address over to a
+      machine that is still up.  Note however that there are implications here
+      for load balancing and moving an additional ip address to a server
+      could increase load on it.

@@ -1,30 +1,36 @@
 mod actions;
 mod apt;
 mod block;
+mod ctdb;
 mod upgrade;
 
 extern crate debian;
 extern crate gluster;
+extern crate ipnetwork;
 extern crate itertools;
 #[macro_use]
 extern crate juju;
 extern crate log;
+extern crate resolve;
 extern crate uuid;
 
 use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
 
 use std::env;
 use std::fs;
-use std::fs::{create_dir, File};
-use std::io::prelude::Read;
+use std::fs::{create_dir, File, OpenOptions};
+use std::net::IpAddr;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
 use debian::version::Version;
+use ipnetwork::IpNetwork;
 use itertools::Itertools;
 use log::LogLevel;
+use resolve::resolver::resolve_addr;
 
 
 #[cfg(test)]
@@ -208,6 +214,69 @@ fn check_for_upgrade() -> Result<(), String> {
                   Some(LogLevel::Error));
         return Ok(());
     }
+}
+
+// Return all the virtual ip networks that will be used
+fn get_cluster_networks() -> Result<Vec<ctdb::VirtualIp>, String> {
+    let mut cluster_networks: Vec<ctdb::VirtualIp> = Vec::new();
+    let config_value = juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?;
+    let virtual_ips: Vec<&str> = config_value.split(" ")
+        .collect();
+    for vip in virtual_ips {
+        if vip.is_empty() {
+            continue;
+        }
+        let network = ctdb::ipnetwork_from_str(vip)?;
+        let interface = ctdb::get_interface_for_address(network)
+            .ok_or(format!("Failed to find interface for network {:?}", network))?;
+        cluster_networks.push(ctdb::VirtualIp {
+            cidr: network,
+            interface: interface,
+        });
+    }
+    Ok(cluster_networks)
+}
+
+// Add all the peers in the gluster cluster to the ctdb cluster
+fn setup_ctdb() -> Result<(), String> {
+    juju::log("setting up ctdb", Some(LogLevel::Debug));
+    let config_value = juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?;
+    if config_value.is_empty() {
+        // virtual_ip_addresses isn't set.  Skip setting ctdb up
+        return Ok(());
+    }
+    let peers = gluster::peer_list().map_err(|e| e.to_string())?;
+    juju::log(&format!("Got ctdb peer list: {:?}", peers),
+              Some(LogLevel::Debug));
+    let mut cluster_addresses: Vec<IpAddr> = Vec::new();
+    for peer in peers {
+        let address = IpAddr::from_str(&peer.hostname).map_err(|e| e.to_string())?;
+        cluster_addresses.push(address)
+    }
+
+    juju::log("writing /etc/default/ctdb", Some(LogLevel::Debug));
+    let mut ctdb_conf = File::create("/etc/default/ctdb").map_err(|e| e.to_string())?;
+    ctdb::render_ctdb_configuration(&mut ctdb_conf).map_err(|e| e.to_string())?;
+
+    let cluster_networks = get_cluster_networks()?;
+
+    juju::log("writing /etc/ctdb/public_addresses", Some(LogLevel::Debug));
+    let mut public_addresses =
+        File::create("/etc/ctdb/public_addresses").map_err(|e| e.to_string())?;
+    ctdb::render_ctdb_public_addresses(&mut public_addresses, &cluster_networks)
+        .map_err(|e| e.to_string())?;
+
+    juju::log("writing /etc/ctdb/nodes", Some(LogLevel::Debug));
+    let mut cluster_nodes = File::create("/etc/ctdb/nodes").map_err(|e| e.to_string())?;
+
+    ctdb::render_ctdb_cluster_nodes(&mut cluster_nodes, &cluster_addresses)
+        .map_err(|e| e.to_string())?;
+
+    // Start the ctdb service
+    juju::log("Starting ctdb", Some(LogLevel::Debug));
+    apt::service_start("ctdb")?;
+
+    Ok(())
 }
 
 fn peers_are_ready(peers: Result<Vec<gluster::Peer>, gluster::GlusterError>) -> bool {
@@ -664,10 +733,6 @@ fn server_changed() -> Result<(), String> {
                   Some(LogLevel::Debug));
         juju::log(&"Loading config".to_string(), Some(LogLevel::Info));
 
-        let mut f = File::open("config.yaml").map_err(|e| e.to_string())?;
-        let mut s = String::new();
-        f.read_to_string(&mut s).map_err(|e| e.to_string())?;
-
         juju::status_set(juju::Status {
                 status_type: juju::StatusType::Maintenance,
                 message: "Checking for new peers to probe".to_string(),
@@ -702,6 +767,7 @@ fn server_changed() -> Result<(), String> {
                             }).map_err(|e| e.to_string())?;
                         // Ensure the cluster is mounted
                         mount_cluster(&volume_name)?;
+                        setup_ctdb()?;
                         return Ok(());
                     }
                     Err(e) => {
@@ -759,6 +825,7 @@ fn server_changed() -> Result<(), String> {
                             message: "Starting volume succeeded.".to_string(),
                         }).map_err(|e| e.to_string())?;
                     mount_cluster(&volume_name)?;
+                    setup_ctdb()?;
                     // Update the juju status
                     update_status()?;
                 }
@@ -978,8 +1045,8 @@ fn mount_cluster(volume_name: &str) -> Result<(), String> {
 // Update the juju status information
 fn update_status() -> Result<(), String> {
     let version = get_glusterfs_version()?;
-    juju::application_version_set(
-        &format!("{}", version.upstream_version)).map_err(|e| e.to_string())?;
+    juju::application_version_set(&format!("{}", version.upstream_version))
+        .map_err(|e| e.to_string())?;
 
     let volume_name = get_config_value("volume_name")?;
 

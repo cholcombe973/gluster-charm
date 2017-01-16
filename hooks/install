@@ -7,11 +7,11 @@ if is_centos
   then
     juju-log "Installing Gluster"
     wget -P /etc/yum.repos.d http://download.gluster.org/pub/gluster/glusterfs/LATEST/RHEL/glusterfs-epel.repo
-    yum install glusterfs-server glusterfs-common glusterfs-client
+    yum install ctdb glusterfs-server glusterfs-common glusterfs-client
   else
     apt-add-repository -y $(config-get source)
     apt-get update
 
     juju-log "Installing Gluster"
-    apt-get -y install nfs-common glusterfs-server glusterfs-common glusterfs-client
+    apt-get -y install ctdb nfs-common glusterfs-server glusterfs-common glusterfs-client
 fi
