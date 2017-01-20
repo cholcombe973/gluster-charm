@@ -31,6 +31,23 @@ options:
     description: |
       The filesystem type to use for each one of the bricks.  Can be either
       xfs, btrfs, or ext4
+  source:
+    type: string
+    default: ppa:gluster/glusterfs-3.8
+    description: |
+      Optional configuration to support use of additional sources such as:
+        - ppa:myteam/ppa
+        - cloud:trusty-proposed/kilo
+        - http://my.archive.com/ubuntu main
+      The last option should be used in conjunction with the key configuration
+      option. NOTE: Changing this configuration value after your cluster is
+      deployed will initiate a rolling upgrade of the servers one by one.
+  key:
+    type: string
+    default:
+    description: |
+      Key ID to import to the apt keyring to support use with arbitary source
+      configuration from outside of Launchpad archives or PPA's.
   encryption:
     type: boolean
     default: false
