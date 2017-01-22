@@ -4,12 +4,19 @@ version = "0.1.0"
 authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 
 [dependencies]
+chrono = { version = "0.2", features = ["rustc-serialize"] }
+debian = "*"
 gluster = "*"
+init-daemon = "*"
 itertools = "*"
-juju = "*"
+juju = {path = "../Juju"}
+libc = "*"
 libudev = "*"
 log = "*"
+openssl = "*"
+rand = "*"
 regex = "*"
+rustc-serialize = "*"
 uuid = { version = "*", features = ["v4"] }
 
 # The development profile, used for `cargo build`
