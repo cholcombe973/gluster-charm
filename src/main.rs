@@ -659,6 +659,9 @@ fn setup_encryption(volume: &str) -> Result<(), String> {
     let leader = juju::is_leader().map_err(|e| e.to_string())?;
     if leader {
         // The leader creates the public and private keys
+        status_set!(Maintenance "Generating Encryption Keys");
+        juju::log(&"Generating encryption keys".to_string(),
+                  Some(LogLevel::Info));
         let keypair = encryption::generate_keypair(4096).unwrap();
         encryption::save_keys(&keypair.0, &keypair.1).map_err(|e| e.to_string())?;
         encryption::enable_io_encryption(&volume).map_err(|e| e.to_string())?;
