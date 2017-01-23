@@ -32,7 +32,7 @@ pub fn generate_keypair(keysize: u32) -> Result<(Vec<u8>, Vec<u8>), ErrorStack> 
 }
 
 // Take the public and private keys and save them to disk where gluster can find them
-pub fn save_keys(public_key: &Vec<u8>, private_key: &Vec<u8>) -> Result<(), ::std::io::Error> {
+pub fn save_keys(public_key: &[u8], private_key: &[u8]) -> Result<(), ::std::io::Error> {
     juju::log("Creating /etc/ssl/glusterfs.pem file",
               Some(LogLevel::Debug));
     let mut pem = File::create("/etc/ssl/glusterfs.pem")?;
@@ -53,8 +53,8 @@ pub fn save_keys(public_key: &Vec<u8>, private_key: &Vec<u8>) -> Result<(), ::st
 // Enable client and server side encryption
 pub fn enable_io_encryption(volume: &str) -> Result<(), GlusterError> {
     let mut settings: Vec<GlusterOption> = Vec::new();
-    GlusterOption::from_str("client.ssl", "on".to_string())?;
-    GlusterOption::from_str("server.ssl", "on".to_string())?;
+    settings.push(GlusterOption::from_str("client.ssl", "on".to_string())?);
+    settings.push(GlusterOption::from_str("server.ssl", "on".to_string())?);
     volume_set_options(&volume, settings)?;
     Ok(())
 }

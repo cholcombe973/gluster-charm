@@ -6,7 +6,8 @@ authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 [dependencies]
 chrono = { version = "0.2", features = ["rustc-serialize"] }
 debian = "*"
-gluster = "*"
+# gluster = "*"
+gluster = {path = "../Gluster"}# "*"
 init-daemon = "*"
 itertools = "*"
 juju = {path = "../Juju"}

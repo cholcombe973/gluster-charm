@@ -4,7 +4,7 @@ version = "0.1.0"
 dependencies = [
  "chrono 0.2.25 (registry+https://github.com/rust-lang/crates.io-index)",
  "debian 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "gluster 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gluster 0.6.3",
  "init-daemon 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.5.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "juju 0.5.9",
@@ -105,8 +105,7 @@ dependencies = [
 
 [[package]]
 name = "gluster"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+version = "0.6.3"
 dependencies = [
  "byteorder 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -474,7 +473,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum either 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "3d2b503c86dad62aaf414ecf2b8c527439abedb3f8d812537f0b12bfd6f32a91"
 "checksum error-chain 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)" = "318cb3c71ee4cdea69fdc9e15c173b245ed6063e1709029e8fd32525a881120f"
 "checksum gdi32-sys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "0912515a8ff24ba900422ecda800b52f4016a56251922d397c576bf92c690518"
-"checksum gluster 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "be472efb192b930fe7a0328759e08d04408b2417b5bc55368934742dc5417d22"
 "checksum init-daemon 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c403eb960d1fd543b064fd6abbb6990237d6b415ebf9a9732d758c85d3cae51f"
 "checksum itertools 0.5.9 (registry+https://github.com/rust-lang/crates.io-index)" = "d95557e7ba6b71377b0f2c3b3ae96c53f1b75a926a6901a500f557a370af730a"
 "checksum itoa 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ae3088ea4baeceb0284ee9eea42f591226e6beaecf65373e41b38d95a1b8e7a1"
