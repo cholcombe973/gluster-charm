@@ -31,6 +31,15 @@ options:
     description: |
       The filesystem type to use for each one of the bricks.  Can be either
       xfs, btrfs, or ext4
+  splitbrain_policy:
+    type: string
+    default: size
+    description: |
+      Split brain means that the cluster can not come to consensus on which
+      version of a file to serve to a client.  
+      This option will automatically resolve split-brains in replica volumes
+      without having to use the gluster CLI or various other hacks.  Other
+      options include: ctime|mtime|size|majority.
   source:
     type: string
     default: ppa:gluster/glusterfs-3.8
