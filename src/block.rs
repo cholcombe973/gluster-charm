@@ -5,8 +5,9 @@ use self::regex::Regex;
 use uuid::Uuid;
 
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use log::LogLevel;
@@ -154,37 +155,69 @@ fn install_utils() -> Result<i32, String> {
     return process_output(run_command("/usr/bin/apt-get", &arg_list, true));
 }
 
+/// Return true/false respectively if the directory is a mount point
+pub fn is_mounted(directory: &str) -> Result<bool, String> {
+    let path = Path::new(directory);
+    let parent = path.parent();
+
+    let dir_metadata = try!(fs::metadata(directory).map_err(|e| e.to_string()));
+    let file_type = dir_metadata.file_type();
+
+    if file_type.is_symlink() {
+        // A symlink can never be a mount point
+        return Ok(false);
+    }
+
+    if parent.is_some() {
+        let parent_metadata = try!(fs::metadata(parent.unwrap()).map_err(|e| e.to_string()));
+        if parent_metadata.dev() != dir_metadata.dev() {
+            // path/.. on a different device as path
+            return Ok(true);
+        }
+    } else {
+        // If the directory doesn't have a parent it's the root filesystem
+        return Ok(false);
+    }
+    return Ok(false);
+}
+
 // This assumes the device is formatted at this point
 pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
-    let mut arg_list: Vec<String> = Vec::new();
-    match device.id {
-        Some(id) => {
-            arg_list.push("-U".to_string());
-            arg_list.push(id.hyphenated().to_string());
-        }
-        None => {
-            arg_list.push(format!("/dev/{}", device.name));
-        }
-    };
-    // arg_list.push("-t".to_string());
-    // match device.fs_type{
-    // FilesystemType::Btrfs => {
-    // arg_list.push("btrfs".to_string());
-    // },
-    // FilesystemType::Ext4 => {
-    // arg_list.push("ext4".to_string());
-    // },
-    // FilesystemType::Xfs => {
-    // arg_list.push("xfs".to_string());
-    // },
-    // FilesystemType::Unknown => {
-    // return Err("Unable to mount unknown filesystem type".to_string());
-    // }
-    // };
-    //
-    arg_list.push(mount_point.to_string());
+    if !Path::new(mount_point).exists() {
+        fs::create_dir(mount_point).map_err(|e| e.to_string())?;
+    }
+    if !is_mounted(mount_point)? {
+        let mut arg_list: Vec<String> = Vec::new();
+        match device.id {
+            Some(id) => {
+                arg_list.push("-U".to_string());
+                arg_list.push(id.hyphenated().to_string());
+            }
+            None => {
+                arg_list.push(format!("/dev/{}", device.name));
+            }
+        };
+        // arg_list.push("-t".to_string());
+        // match device.fs_type{
+        // FilesystemType::Btrfs => {
+        // arg_list.push("btrfs".to_string());
+        // },
+        // FilesystemType::Ext4 => {
+        // arg_list.push("ext4".to_string());
+        // },
+        // FilesystemType::Xfs => {
+        // arg_list.push("xfs".to_string());
+        // },
+        // FilesystemType::Unknown => {
+        // return Err("Unable to mount unknown filesystem type".to_string());
+        // }
+        // };
+        //
+        arg_list.push(mount_point.to_string());
 
-    return process_output(run_command("mount", &arg_list, true));
+        return process_output(run_command("mount", &arg_list, true));
+    }
+    Ok((0))
 }
 
 fn process_output(output: Output) -> Result<i32, String> {

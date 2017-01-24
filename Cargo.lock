@@ -7,7 +7,7 @@ dependencies = [
  "gluster 0.6.3",
  "init-daemon 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.5.9 (registry+https://github.com/rust-lang/crates.io-index)",
- "juju 0.5.9",
+ "juju 0.5.10",
  "libc 0.2.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "libudev 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -139,7 +139,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "juju"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "charmhelpers 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",

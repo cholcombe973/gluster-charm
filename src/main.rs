@@ -14,12 +14,10 @@ extern crate uuid;
 
 use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
 
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::fs::{create_dir, File};
 use std::io::prelude::Read;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -657,39 +655,17 @@ fn shrink_volume(peer: gluster::Peer, volume_info: Option<gluster::Volume>) -> R
 
 fn setup_encryption(volume: &str) -> Result<(), String> {
     let leader = juju::is_leader().map_err(|e| e.to_string())?;
+    // Everyone sets up their own keypair
+    status_set!(Maintenance "Generating Encryption Keys");
+    juju::log(&"Generating encryption keys".to_string(),
+              Some(LogLevel::Info));
+    let keypair = encryption::generate_keypair(2048).unwrap();
+    encryption::save_keys(&keypair.0, &keypair.1).map_err(|e| e.to_string())?;
+    status_set!(Maintenance "");
+
     if leader {
-        // The leader creates the public and private keys
-        status_set!(Maintenance "Generating Encryption Keys");
-        juju::log(&"Generating encryption keys".to_string(),
-                  Some(LogLevel::Info));
-        let keypair = encryption::generate_keypair(4096).unwrap();
-        encryption::save_keys(&keypair.0, &keypair.1).map_err(|e| e.to_string())?;
-        encryption::enable_io_encryption(&volume).map_err(|e| e.to_string())?;
-
-        let mut ssl_keys = HashMap::new();
-        ssl_keys.insert("public_key".to_string(),
-                        String::from_utf8_lossy(&keypair.0).into_owned());
-        ssl_keys.insert("private_key".to_string(),
-                        String::from_utf8_lossy(&keypair.1).into_owned());
-
-        juju::leader_set(ssl_keys).map_err(|e| e.to_string())?;
-
         // Enable encryption
         encryption::enable_io_encryption(&volume).map_err(|e| e.to_string())?;
-    } else {
-        // Everyone else gets those keys from the leader
-        let public_key =
-            juju::leader_get(Some("public_key".to_string())).map_err(|e| e.to_string())?;
-        let private_key =
-            juju::leader_get(Some("private_key".to_string())).map_err(|e| e.to_string())?;
-        if public_key.is_empty() || private_key.is_empty() {
-            juju::log("Public or Private SSL key has not be set by the leader yet",
-                      Some(LogLevel::Debug));
-            return Ok(());
-        }
-
-        encryption::save_keys(public_key.as_bytes(), private_key.as_bytes())
-            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -771,6 +747,9 @@ fn server_changed() -> Result<(), String> {
                     return Err(e.to_string());
                 }
             }
+            // Sleep before issuing the start command.  Gluster needs some time to settle
+            thread::sleep(Duration::from_secs(1));
+
             match gluster::volume_start(&volume_name, false) {
                 Ok(_) => {
                     juju::log(&"Starting volume succeeded.".to_string(),
@@ -929,37 +908,12 @@ fn get_glusterfs_version() -> Result<Version, String> {
     return Err("Unable to find glusterfs-server version".to_string());
 }
 
-fn is_mounted(directory: &str) -> Result<bool, String> {
-    let path = Path::new(directory);
-    let parent = path.parent();
-
-    let dir_metadata = try!(fs::metadata(directory).map_err(|e| e.to_string()));
-    let file_type = dir_metadata.file_type();
-
-    if file_type.is_symlink() {
-        // A symlink can never be a mount point
-        return Ok(false);
-    }
-
-    if parent.is_some() {
-        let parent_metadata = try!(fs::metadata(parent.unwrap()).map_err(|e| e.to_string()));
-        if parent_metadata.dev() != dir_metadata.dev() {
-            // path/.. on a different device as path
-            return Ok(true);
-        }
-    } else {
-        // If the directory doesn't have a parent it's the root filesystem
-        return Ok(false);
-    }
-    return Ok(false);
-}
-
 // Mount the cluster at /mnt/glusterfs using fuse
 fn mount_cluster(volume_name: &str) -> Result<(), String> {
     if !Path::new("/mnt/glusterfs").exists() {
         create_dir("/mnt/glusterfs").map_err(|e| e.to_string())?;
     }
-    if !is_mounted("/mnt/glusterfs")? {
+    if !block::is_mounted("/mnt/glusterfs")? {
         let mut cmd = std::process::Command::new("mount");
         cmd.arg("-t");
         cmd.arg("glusterfs");
