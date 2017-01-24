@@ -445,7 +445,7 @@ fn check_and_create_dir(path: &str) -> Result<(), String> {
 // Create a new volume if enough peers are available
 fn create_volume(peers: &Vec<gluster::Peer>,
                  volume_info: Option<gluster::Volume>)
-                 -> Result<i32, String> {
+                 -> Result<Status, String> {
     let cluster_type_config = get_config_value("cluster_type")?;
     let cluster_type = gluster::VolumeType::from_str(&cluster_type_config);
     let volume_name = get_config_value("volume_name")?;
@@ -472,7 +472,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
                 Status::WaitForMorePeers => {
                     juju::log(&"Waiting for more peers".to_string(), Some(LogLevel::Debug));
                     status_set!(Maintenance "Waiting for more peers");
-                    return Ok(0);
+                    return Ok(Status::WaitForMorePeers);
                 }
                 Status::InvalidConfig(config_err) => {
                     return Err(config_err);
@@ -487,9 +487,6 @@ fn create_volume(peers: &Vec<gluster::Peer>,
     juju::log(&format!("Got brick list: {:?}", brick_list),
               Some(LogLevel::Debug));
 
-    // Check to make sure the bricks are formatted and mounted
-    // let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
-
     juju::log(&format!("Creating volume of type {:?} with brick list {:?}",
                        cluster_type,
                        brick_list),
@@ -497,80 +494,90 @@ fn create_volume(peers: &Vec<gluster::Peer>,
 
     match cluster_type {
         gluster::VolumeType::Distribute => {
-            gluster::volume_create_distributed(&volume_name,
-                                               gluster::Transport::Tcp,
-                                               brick_list,
-                                               true)
-                .map_err(|e| e.to_string())
+            let _ = gluster::volume_create_distributed(&volume_name,
+                                                       gluster::Transport::Tcp,
+                                                       brick_list,
+                                                       true)
+                .map_err(|e| e.to_string());
+            Ok(Status::Created)
         }
         gluster::VolumeType::Stripe => {
-            gluster::volume_create_striped(&volume_name,
-                                           3,
-                                           gluster::Transport::Tcp,
-                                           brick_list,
-                                           true)
-                .map_err(|e| e.to_string())
+            let _ = gluster::volume_create_striped(&volume_name,
+                                                   3,
+                                                   gluster::Transport::Tcp,
+                                                   brick_list,
+                                                   true)
+                .map_err(|e| e.to_string());
+            Ok(Status::Created)
         }
         gluster::VolumeType::Replicate => {
-            gluster::volume_create_replicated(&volume_name,
-                                              replicas,
-                                              gluster::Transport::Tcp,
-                                              brick_list,
-                                              true)
-                .map_err(|e| e.to_string())
-        }
-        gluster::VolumeType::StripedAndReplicate => {
-            gluster::volume_create_striped_replicated(&volume_name,
-                                                      3,
-                                                      3,
+            let _ = gluster::volume_create_replicated(&volume_name,
+                                                      replicas,
                                                       gluster::Transport::Tcp,
                                                       brick_list,
                                                       true)
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string());
+            Ok(Status::Created)
+        }
+        gluster::VolumeType::StripedAndReplicate => {
+            let _ = gluster::volume_create_striped_replicated(&volume_name,
+                                                              3,
+                                                              3,
+                                                              gluster::Transport::Tcp,
+                                                              brick_list,
+                                                              true)
+                .map_err(|e| e.to_string());
+            Ok(Status::Created)
         }
         gluster::VolumeType::Disperse => {
-            gluster::volume_create_erasure(&volume_name,
-                                           3,
-                                           1,
-                                           gluster::Transport::Tcp,
-                                           brick_list,
-                                           true)
-                .map_err(|e| e.to_string())
+            let _ = gluster::volume_create_erasure(&volume_name,
+                                                   3,
+                                                   1,
+                                                   gluster::Transport::Tcp,
+                                                   brick_list,
+                                                   true)
+                .map_err(|e| e.to_string());
+            Ok(Status::Created)
         }
         // gluster::VolumeType::Tier => {},
         gluster::VolumeType::DistributedAndStripe => {
-            gluster::volume_create_striped(&volume_name,
-                                           3,
-                                           gluster::Transport::Tcp,
-                                           brick_list,
-                                           true)
-                .map_err(|e| e.to_string())
+            let _ = gluster::volume_create_striped(&volume_name,
+                                                   3,
+                                                   gluster::Transport::Tcp,
+                                                   brick_list,
+                                                   true)
+                .map_err(|e| e.to_string());
+            Ok(Status::Created)
         }
         gluster::VolumeType::DistributedAndReplicate => {
-            gluster::volume_create_replicated(&volume_name,
-                                              3,
-                                              gluster::Transport::Tcp,
-                                              brick_list,
-                                              true)
-                .map_err(|e| e.to_string())
-        }
-        gluster::VolumeType::DistributedAndStripedAndReplicate => {
-            gluster::volume_create_striped_replicated(&volume_name,
-                                                      3,
+            let _ = gluster::volume_create_replicated(&volume_name,
                                                       3,
                                                       gluster::Transport::Tcp,
                                                       brick_list,
                                                       true)
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string());
+            Ok(Status::Created)
         }
-        gluster::VolumeType::DistributedAndDisperse =>
-            gluster::volume_create_erasure(
+        gluster::VolumeType::DistributedAndStripedAndReplicate => {
+            let _ = gluster::volume_create_striped_replicated(&volume_name,
+                                                              3,
+                                                              3,
+                                                              gluster::Transport::Tcp,
+                                                              brick_list,
+                                                              true)
+                .map_err(|e| e.to_string());
+            Ok(Status::Created)
+        }
+        gluster::VolumeType::DistributedAndDisperse => {
+            let _ = gluster::volume_create_erasure(
                 &volume_name,
                 brick_list.len()-1, //TODO: This number has to be lower than the brick length
                 1,
                 gluster::Transport::Tcp,
                 brick_list,
-                true).map_err(|e| e.to_string()),
+                true).map_err(|e| e.to_string());
+            Ok(Status::Created)
+        }
     }
 }
 
@@ -735,10 +742,25 @@ fn server_changed() -> Result<(), String> {
                       Some(LogLevel::Info));
             status_set!(Maintenance format!("Creating volume {}", volume_name));
             match create_volume(&peers, None) {
-                Ok(_) => {
-                    juju::log(&"Create volume succeeded.".to_string(),
-                              Some(LogLevel::Info));
-                    status_set!(Maintenance "Create volume succeeded");
+                Ok(status) => {
+                    match status {
+                        Status::Created => {
+                            juju::log(&"Create volume succeeded.".to_string(),
+                                      Some(LogLevel::Info));
+                            status_set!(Maintenance "Create volume succeeded");
+                        }
+                        Status::WaitForMorePeers => {
+                            juju::log(&"Waiting for all peers to enter the Peer in Cluster status"
+                                          .to_string(),
+                                      Some(LogLevel::Debug));
+                            status_set!(Maintenance
+                                "Waiting for all peers to enter the \"Peer in Cluster status\"");
+                            return Ok(());
+                        }
+                        _ => {
+                            // Status is failed
+                        }
+                    }
                 }
                 Err(e) => {
                     juju::log(&format!("Create volume failed with output: {}", e),
@@ -747,19 +769,16 @@ fn server_changed() -> Result<(), String> {
                     return Err(e.to_string());
                 }
             }
-            // Sleep before issuing the start command.  Gluster needs some time to settle
-            thread::sleep(Duration::from_secs(1));
-
+            // Enable encryption if requested before we start the volume
+            if let Some(_) = juju::config_get("encryption").ok() {
+                setup_encryption(&volume_name)?;
+            }
             match gluster::volume_start(&volume_name, false) {
                 Ok(_) => {
                     juju::log(&"Starting volume succeeded.".to_string(),
                               Some(LogLevel::Info));
                     status_set!(Active "Starting volume succeeded.");
                     mount_cluster(&volume_name)?;
-                    // Enable encryption if requested
-                    if let Some(_) = juju::config_get("encryption").ok() {
-                        setup_encryption(&volume_name)?;
-                    }
                 }
                 Err(e) => {
                     juju::log(&format!("Start volume failed with output: {:?}", e),
