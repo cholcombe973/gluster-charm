@@ -36,11 +36,9 @@ options:
     default: ppa:gluster/glusterfs-3.8
     description: |
       Optional configuration to support use of additional sources such as:
-
         - ppa:myteam/ppa
         - cloud:trusty-proposed/kilo
         - http://my.archive.com/ubuntu main
-
       The last option should be used in conjunction with the key configuration
       option. NOTE: Changing this configuration value after your cluster is
       deployed will initiate a rolling upgrade of the servers one by one.
@@ -50,3 +48,10 @@ options:
     description: |
       Key ID to import to the apt keyring to support use with arbitary source
       configuration from outside of Launchpad archives or PPA's.
+  encryption:
+    type: boolean
+    default: false
+    description: |
+      Enabling this option will turn on SSL encryption for client, replication
+      and management traffic on the cluster. This is not encryption at rest
+      but rather encryption while transmitting over the wire.
