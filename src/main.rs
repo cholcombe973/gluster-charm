@@ -664,6 +664,60 @@ fn shrink_volume(peer: gluster::Peer, volume_info: Option<gluster::Volume>) -> R
     }
 }
 
+fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
+    match gluster::volume_start(&volume_name, false) {
+        Ok(_) => {
+            juju::log(&"Starting volume succeeded.".to_string(),
+                      Some(LogLevel::Info));
+            status_set!(Active "Starting volume succeeded.");
+            mount_cluster(&volume_name)?;
+            // Update the juju status
+            return Ok(());
+        }
+        Err(e) => {
+            juju::log(&format!("Start volume failed with output: {:?}", e),
+                      Some(LogLevel::Error));
+            status_set!(Blocked "Start volume failed.  Please check juju debug-log.");
+            return Err(e.to_string());
+        }
+    };
+}
+
+fn create_gluster_volume(volume_name: &str, peers: Vec<gluster::Peer>) -> Result<(), String> {
+    match create_volume(&peers, None) {
+        Ok(status) => {
+            match status {
+                Status::Created => {
+                    juju::log(&"Create volume succeeded.".to_string(),
+                              Some(LogLevel::Info));
+                    status_set!(Maintenance "Create volume succeeded");
+                    start_gluster_volume(&volume_name)?;
+                    return Ok(());
+                }
+                Status::WaitForMorePeers => {
+                    juju::log(&"Waiting for all peers to enter the Peer in Cluster status"
+                                  .to_string(),
+                              Some(LogLevel::Debug));
+                    status_set!(Maintenance
+                        "Waiting for all peers to enter the \"Peer in Cluster status\"");
+                    return Ok(());
+                }
+                _ => {
+                    // Status is failed
+                    // What should I return here?
+                    return Ok(());
+                }
+            }
+        }
+        Err(e) => {
+            juju::log(&format!("Create volume failed with output: {}", e),
+                      Some(LogLevel::Error));
+            status_set!(Blocked "Create volume failed.  Please check juju debug-log.");
+            return Err(e.to_string());
+        }
+    };
+}
+
 fn server_changed() -> Result<(), String> {
     let context = juju::Context::new_from_env();
     let leader = juju::is_leader().map_err(|e| e.to_string())?;
@@ -678,10 +732,7 @@ fn server_changed() -> Result<(), String> {
         let mut s = String::new();
         f.read_to_string(&mut s).map_err(|e| e.to_string())?;
 
-        juju::status_set(juju::Status {
-                status_type: juju::StatusType::Maintenance,
-                message: "Checking for new peers to probe".to_string(),
-            }).map_err(|e| e.to_string())?;
+        status_set!(Maintenance "Checking for new peers to probe");
 
         let mut peers = gluster::peer_list().map_err(|e| e.to_string())?;
         juju::log(&format!("peer list: {:?}", peers), Some(LogLevel::Debug));
@@ -697,19 +748,13 @@ fn server_changed() -> Result<(), String> {
             Ok(_) => {
                 juju::log(&format!("Expanding volume {}", volume_name),
                           Some(LogLevel::Info));
-                juju::status_set(juju::Status {
-                        status_type: juju::StatusType::Maintenance,
-                        message: format!("Expanding volume {}", volume_name),
-                    }).map_err(|e| e.to_string())?;
+                status_set!(Maintenance format!("Expanding volume {}", volume_name));
 
                 match expand_volume(peers, volume_info.ok()) {
                     Ok(v) => {
                         juju::log(&format!("Expand volume succeeded.  Return code: {}", v),
                                   Some(LogLevel::Info));
-                        juju::status_set(juju::Status {
-                                status_type: juju::StatusType::Active,
-                                message: "Expand volume succeeded.".to_string(),
-                            }).map_err(|e| e.to_string())?;
+                        status_set!(Active "Expand volume succeeded.");
                         // Ensure the cluster is mounted
                         mount_cluster(&volume_name)?;
                         return Ok(());
@@ -717,11 +762,7 @@ fn server_changed() -> Result<(), String> {
                     Err(e) => {
                         juju::log(&format!("Expand volume failed with output: {}", e),
                                   Some(LogLevel::Error));
-                        juju::status_set(juju::Status {
-                                status_type: juju::StatusType::Blocked,
-                                message: "Expand volume failed.  Please check juju debug-log."
-                                    .to_string(),
-                            }).map_err(|e| e.to_string())?;
+                        status_set!(Blocked "Expand volume failed.  Please check juju debug-log.");
                         return Err(e);
                     }
                 }
@@ -736,72 +777,11 @@ fn server_changed() -> Result<(), String> {
         if !existing_volume {
             juju::log(&format!("Creating volume {}", volume_name),
                       Some(LogLevel::Info));
-            juju::status_set(juju::Status {
-                    status_type: juju::StatusType::Maintenance,
-                    message: format!("Creating volume {}", volume_name),
-                }).map_err(|e| e.to_string())?;
-            match create_volume(&peers, None) {
-                Ok(status) => {
-                    match status {
-                        Status::Created => {
-                            juju::log(&"Create volume succeeded.".to_string(),
-                                      Some(LogLevel::Info));
-                            status_set!(Maintenance "Create volume succeeded");
-                        }
-                        Status::WaitForMorePeers => {
-                            juju::log(&"Waiting for all peers to enter the Peer in Cluster status"
-                                          .to_string(),
-                                      Some(LogLevel::Debug));
-                            status_set!(Maintenance
-                                "Waiting for all peers to enter the \"Peer in Cluster status\"");
-                            return Ok(());
-                        }
-                        _ => {
-                            // Status is failed
-                        }
-                    }
-                }
-                Err(e) => {
-                    juju::log(&format!("Create volume failed with output: {}", e),
-                              Some(LogLevel::Error));
-                    juju::status_set(juju::Status {
-                            status_type: juju::StatusType::Blocked,
-                            message: "Create volume failed.  Please check juju debug-log."
-                                .to_string(),
-                        }).map_err(|e| e.to_string())?;
-                    return Err(e.to_string());
-                }
-            }
-            match gluster::volume_start(&volume_name, false) {
-                Ok(_) => {
-                    juju::log(&"Starting volume succeeded.".to_string(),
-                              Some(LogLevel::Info));
-                    juju::status_set(juju::Status {
-                            status_type: juju::StatusType::Active,
-                            message: "Starting volume succeeded.".to_string(),
-                        }).map_err(|e| e.to_string())?;
-                    mount_cluster(&volume_name)?;
-                    // Update the juju status
-                    update_status()?;
-                }
-                Err(e) => {
-                    juju::log(&format!("Start volume failed with output: {:?}", e),
-                              Some(LogLevel::Error));
-                    juju::status_set(juju::Status {
-                            status_type: juju::StatusType::Blocked,
-                            message: "Start volume failed.  Please check juju debug-log."
-                                .to_string(),
-                        }).map_err(|e| e.to_string())?;
-                    return Err(e.to_string());
-                }
-            };
+            status_set!(Maintenance format!("Creating volume {}", volume_name));
+            create_gluster_volume(&volume_name, peers)?;
         }
         return Ok(());
     } else {
-        juju::status_set(juju::Status {
-                status_type: juju::StatusType::Active,
-                message: "".to_string(),
-            }).map_err(|e| e.to_string())?;
         return Ok(());
     }
 }
@@ -1002,26 +982,18 @@ fn update_status() -> Result<(), String> {
     let version = get_glusterfs_version()?;
     juju::application_version_set(
         &format!("{}", version.upstream_version)).map_err(|e| e.to_string())?;
-
     let volume_name = get_config_value("volume_name")?;
 
-    // Ensure the cluster is mounted
-    mount_cluster(&volume_name)?;
-
-    let volume_info = gluster::volume_info(&volume_name);
-    match volume_info {
-        Ok(vol) => {
-            juju::status_set(juju::Status {
-                    status_type: juju::StatusType::Active,
-                    message: format!("Unit is ready ({} bricks)", vol.bricks.len()),
-                }).map_err(|e| e.to_string())?;
+    let local_bricks = gluster::get_local_bricks(&volume_name);
+    match local_bricks {
+        Ok(bricks) => {
+            status_set!(Active format!("Unit is ready ({} bricks)", bricks.len()));
+            // Ensure the cluster is mounted
+            mount_cluster(&volume_name)?;
             Ok(())
         }
         Err(gluster::GlusterError::NoVolumesPresent) => {
-            juju::status_set(juju::Status {
-                    status_type: juju::StatusType::Blocked,
-                    message: "No volume found".to_string(),
-                }).map_err(|e| e.to_string())?;
+            status_set!(Blocked "No bricks found");
             Ok(())
         }
         _ => Ok(()),
@@ -1053,5 +1025,6 @@ fn main() {
             juju::log(&format!("Hook failed with error: {:?}", result.err()),
                       Some(LogLevel::Error));
         }
+        update_status();
     }
 }
