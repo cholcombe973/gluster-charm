@@ -235,10 +235,7 @@ fn peers_are_ready(peers: Result<Vec<gluster::Peer>, gluster::GlusterError>) -> 
 fn wait_for_peers() -> Result<(), String> {
     juju::log(&"Waiting for all peers to enter the Peer in Cluster status".to_string(),
               Some(LogLevel::Debug));
-    juju::status_set(juju::Status {
-            status_type: juju::StatusType::Maintenance,
-            message: "Waiting for all peers to enter the \"Peer in Cluster status\"".to_string(),
-        }).map_err(|e| e.to_string())?;
+    status_set!(Maintenance "Waiting for all peers to enter the \"Peer in Cluster status\"");
     let mut iterations = 0;
     while !peers_are_ready(gluster::peer_status()) {
         thread::sleep(Duration::from_secs(1));
@@ -425,10 +422,7 @@ fn check_and_create_dir(path: &str) -> Result<(), String> {
             match e.kind() {
                 std::io::ErrorKind::NotFound => {
                     juju::log(&format!("Creating dir {}", path), Some(LogLevel::Debug));
-                    juju::status_set(juju::Status {
-                            status_type: juju::StatusType::Maintenance,
-                            message: format!("Creating dir {}", path),
-                        }).map_err(|e| e.to_string())?;
+                    status_set!(Maintenance format!("Creating dir {}", path));
                     fs::create_dir(&path).map_err(|e| e.to_string())?;
                     return Ok(());
                 }
@@ -469,10 +463,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
             match e {
                 Status::WaitForMorePeers => {
                     juju::log(&"Waiting for more peers".to_string(), Some(LogLevel::Info));
-                    juju::status_set(juju::Status {
-                            status_type: juju::StatusType::Maintenance,
-                            message: "Waiting for more peers".to_string(),
-                        }).map_err(|e| e.to_string())?;
+                    status_set!(Maintenance "Waiting for more peers");
                     return Ok(Status::WaitForMorePeers);
                 }
                 Status::InvalidConfig(config_err) => {
@@ -806,10 +797,7 @@ fn brick_attached() -> Result<(), String> {
         block::FilesystemType::Xfs => {
             juju::log(&format!("Formatting block device with XFS: {:?}", &brick_path),
                       Some(LogLevel::Info));
-            juju::status_set(juju::Status {
-                    status_type: juju::StatusType::Maintenance,
-                    message: format!("Formatting block device with XFS: {:?}", &brick_path),
-                }).map_err(|e| e.to_string())?;
+            status_set!(Maintenance format!("Formatting block device with XFS: {:?}", &brick_path));
 
             let filesystem_type = block::Filesystem::Xfs {
                 inode_size: None,
@@ -820,10 +808,8 @@ fn brick_attached() -> Result<(), String> {
         block::FilesystemType::Ext4 => {
             juju::log(&format!("Formatting block device with Ext4: {:?}", &brick_path),
                       Some(LogLevel::Info));
-            juju::status_set(juju::Status {
-                    status_type: juju::StatusType::Maintenance,
-                    message: format!("Formatting block device with Ext4: {:?}", &brick_path),
-                }).map_err(|e| e.to_string())?;
+            status_set!(Maintenance
+                format!("Formatting block device with Ext4: {:?}", &brick_path));
 
             let filesystem_type = block::Filesystem::Ext4 {
                 inode_size: 0,
@@ -834,10 +820,8 @@ fn brick_attached() -> Result<(), String> {
         block::FilesystemType::Btrfs => {
             juju::log(&format!("Formatting block device with Btrfs: {:?}", &brick_path),
                       Some(LogLevel::Info));
-            juju::status_set(juju::Status {
-                    status_type: juju::StatusType::Maintenance,
-                    message: format!("Formatting block device with Btrfs: {:?}", &brick_path),
-                }).map_err(|e| e.to_string())?;
+            status_set!(Maintenance
+                format!("Formatting block device with Btrfs: {:?}", &brick_path));
 
             let filesystem_type = block::Filesystem::Btrfs {
                 leaf_size: 0,
@@ -849,10 +833,7 @@ fn brick_attached() -> Result<(), String> {
         _ => {
             juju::log(&format!("Formatting block device with XFS: {:?}", &brick_path),
                       Some(LogLevel::Info));
-            juju::status_set(juju::Status {
-                    status_type: juju::StatusType::Maintenance,
-                    message: format!("Formatting block device with XFS: {:?}", &brick_path),
-                }).map_err(|e| e.to_string())?;
+            status_set!(Maintenance format!("Formatting block device with XFS: {:?}", &brick_path));
 
             let filesystem_type = block::Filesystem::Xfs {
                 inode_size: None,
@@ -868,10 +849,7 @@ fn brick_attached() -> Result<(), String> {
 
     juju::log(&format!("Mounting block device {:?} at {}", &brick_path, mount_path),
               Some(LogLevel::Info));
-    juju::status_set(juju::Status {
-            status_type: juju::StatusType::Maintenance,
-            message: format!("Mounting block device {:?} at {}", &brick_path, mount_path),
-        }).map_err(|e| e.to_string())?;
+    status_set!(Maintenance format!("Mounting block device {:?} at {}", &brick_path, mount_path));
 
     check_and_create_dir(&mount_path)?;
 
