@@ -23,6 +23,7 @@ use std::thread;
 use std::time::Duration;
 
 use debian::version::Version;
+use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
 use itertools::Itertools;
 use log::LogLevel;
 
@@ -662,7 +663,18 @@ fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
                       Some(LogLevel::Info));
             status_set!(Active "Starting volume succeeded.");
             mount_cluster(&volume_name)?;
-            // Update the juju status
+            let mut settings: Vec<GlusterOption> = Vec::new();
+            // Starting in gluster 3.8 NFS is disabled in favor of ganesha.  I'd like to stick
+            // with the legacy version a bit longer.
+            settings.push(GlusterOption::NfsDisable(Toggle::Off));
+            // Set the split brain policy if requested
+            if let Ok(splitbrain_policy) = juju::config_get("splitbrain_policy") {
+                let policy =
+                    SplitBrainPolicy::from_str(&splitbrain_policy).map_err(|e| e.to_string())?;
+                settings.push(GlusterOption::FavoriteChildPolicy(policy));
+            }
+            let _ = gluster::volume_set_options(&volume_name, settings).map_err(|e| e.to_string())?;
+
             return Ok(());
         }
         Err(e) => {
