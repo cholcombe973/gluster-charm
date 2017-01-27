@@ -669,9 +669,17 @@ fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
             settings.push(GlusterOption::NfsDisable(Toggle::Off));
             // Set the split brain policy if requested
             if let Ok(splitbrain_policy) = juju::config_get("splitbrain_policy") {
-                let policy =
-                    SplitBrainPolicy::from_str(&splitbrain_policy).map_err(|e| e.to_string())?;
-                settings.push(GlusterOption::FavoriteChildPolicy(policy));
+                match SplitBrainPolicy::from_str(&splitbrain_policy) {
+                    Ok(policy) => {
+                        settings.push(GlusterOption::FavoriteChildPolicy(policy));
+                    }
+                    Err(_) => {
+                        juju::log(&format!("Failed to parse splitbrain_policy config setting: \
+                                            {}.",
+                                           splitbrain_policy),
+                                  Some(LogLevel::Error));
+                    }
+                };
             }
             let _ = gluster::volume_set_options(&volume_name, settings).map_err(|e| e.to_string())?;
 
