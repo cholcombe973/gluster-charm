@@ -2,6 +2,13 @@
 extern crate ipnetwork;
 extern crate pnet;
 
+use std::io::{Read, Write};
+use std::net::IpAddr;
+use std::str::FromStr;
+
+use self::ipnetwork::{IpNetworkError, IpNetwork, Ipv4Network, Ipv6Network};
+use self::pnet::datalink::{interfaces, NetworkInterface};
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct VirtualIp {
     pub cidr: IpNetwork,
@@ -16,13 +23,6 @@ impl ToString for VirtualIp {
         }
     }
 }
-
-use std::io::{Read, Write};
-use std::net::IpAddr;
-use std::str::FromStr;
-
-use self::ipnetwork::{IpNetworkError, IpNetwork, Ipv4Network, Ipv6Network};
-use self::pnet::datalink::{interfaces, NetworkInterface};
 
 /// Write the ctdb configuration file out to disk
 pub fn render_ctdb_configuration<T: Write>(f: &mut T) -> Result<usize, ::std::io::Error> {

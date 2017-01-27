@@ -32,7 +32,7 @@ use ipnetwork::IpNetwork;
 use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
 use itertools::Itertools;
 use log::LogLevel;
-use resolve::resolver::resolve_addr;
+use resolve::address::address_name;
 
 
 #[cfg(test)]
@@ -242,8 +242,7 @@ fn get_cluster_networks() -> Result<Vec<ctdb::VirtualIp>, String> {
 // Add all the peers in the gluster cluster to the ctdb cluster
 fn setup_ctdb() -> Result<(), String> {
     juju::log("setting up ctdb", Some(LogLevel::Debug));
-    let config_value = juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?;
-    if config_value.is_empty() {
+    if juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?.is_empty() {
         // virtual_ip_addresses isn't set.  Skip setting ctdb up
         return Ok(());
     }
@@ -948,14 +947,45 @@ fn fuse_relation_joined() -> Result<(), String> {
     Ok(())
 }
 
-fn nfs_relation_joined() -> Result<(), String> {
-    let public_addr = try!(juju::unit_get_public_addr().map_err(|e| e.to_string())).to_string();
+fn resolve_first_vip_to_dns() -> Result<String, String> {
+    let cluster_networks = get_cluster_networks()?;
+    match cluster_networks.first() {
+        Some(cluster_network) => {
+            match cluster_network.cidr {
+                IpNetwork::V4(ref v4_network) => {
+                    // Resolve the ipv4 address back to a dns string
+                    Ok(address_name(&::std::net::IpAddr::V4(v4_network.ip())))
+                }
+                IpNetwork::V6(ref v6_network) => {
+                    // Resolve the ipv6 address back to a dns string
+                    Ok(address_name(&::std::net::IpAddr::V6(v6_network.ip())))
+                }
+            }
+        }
+        None => {
+            // No vips were set?
+            Err("virtual_ip_addresses has no addresses set".to_string())
+        }
+    }
+}
+
+fn nfs_relation_joined() -> Result<(), String> {;
+    let config_value = juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?;
     let volumes = gluster::volume_list();
-    juju::relation_set("gluster-public-address", &public_addr).map_err(|e| e.to_string())?;
     if let Some(vols) = volumes {
         juju::relation_set("volumes", &vols.join(" ")).map_err(|e| e.to_string())?;
     }
-    return Ok(());
+
+    // virtual_ip_addresses isn't set.  Handing back my public address
+    if config_value.is_empty() {
+        let public_addr = try!(juju::unit_get_public_addr().map_err(|e| e.to_string())).to_string();
+        juju::relation_set("gluster-public-address", &public_addr).map_err(|e| e.to_string())?;
+    } else {
+        // virtual_ip_addresses is set.  Handing back the DNS resolved address
+        let dns_name = resolve_first_vip_to_dns()?;
+        juju::relation_set("gluster-public-address", &dns_name).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn get_glusterfs_version() -> Result<Version, String> {
