@@ -23,6 +23,7 @@ use std::thread;
 use std::time::Duration;
 
 use debian::version::Version;
+use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
 use itertools::Itertools;
 use log::LogLevel;
 
@@ -415,25 +416,6 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
     }
 }
 
-fn check_and_create_dir(path: &str) -> Result<(), String> {
-    match fs::metadata(path) {
-        Ok(_) => return Ok(()),
-        Err(e) => {
-            match e.kind() {
-                std::io::ErrorKind::NotFound => {
-                    juju::log(&format!("Creating dir {}", path), Some(LogLevel::Debug));
-                    status_set!(Maintenance format!("Creating dir {}", path));
-                    fs::create_dir(&path).map_err(|e| e.to_string())?;
-                    return Ok(());
-                }
-                _ => {
-                    return Err(format!("Error searching for directory {:?} {:?}", &path, e.kind()));
-                }
-            }
-        }
-    }
-}
-
 // Create a new volume if enough peers are available
 fn create_volume(peers: &Vec<gluster::Peer>,
                  volume_info: Option<gluster::Volume>)
@@ -662,7 +644,26 @@ fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
                       Some(LogLevel::Info));
             status_set!(Active "Starting volume succeeded.");
             mount_cluster(&volume_name)?;
-            // Update the juju status
+            let mut settings: Vec<GlusterOption> = Vec::new();
+            // Starting in gluster 3.8 NFS is disabled in favor of ganesha.  I'd like to stick
+            // with the legacy version a bit longer.
+            settings.push(GlusterOption::NfsDisable(Toggle::Off));
+            // Set the split brain policy if requested
+            if let Ok(splitbrain_policy) = juju::config_get("splitbrain_policy") {
+                match SplitBrainPolicy::from_str(&splitbrain_policy) {
+                    Ok(policy) => {
+                        settings.push(GlusterOption::FavoriteChildPolicy(policy));
+                    }
+                    Err(_) => {
+                        juju::log(&format!("Failed to parse splitbrain_policy config setting: \
+                                            {}.",
+                                           splitbrain_policy),
+                                  Some(LogLevel::Error));
+                    }
+                };
+            }
+            let _ = gluster::volume_set_options(&volume_name, settings).map_err(|e| e.to_string())?;
+
             return Ok(());
         }
         Err(e) => {
@@ -851,7 +852,9 @@ fn brick_attached() -> Result<(), String> {
               Some(LogLevel::Info));
     status_set!(Maintenance format!("Mounting block device {:?} at {}", &brick_path, mount_path));
 
-    check_and_create_dir(&mount_path)?;
+    if !Path::new(&mount_path).exists() {
+        create_dir(&mount_path).map_err(|e| e.to_string())?;
+    }
 
     block::mount_device(&device_info, &mount_path)?;
     return Ok(());
