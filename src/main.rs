@@ -281,23 +281,19 @@ fn setup_ctdb() -> Result<(), String> {
 }
 
 fn peers_are_ready(peers: Result<Vec<gluster::Peer>, gluster::GlusterError>) -> bool {
-    if peers.is_err() {
-        return false;
-    }
-
-    juju::log(&format!("Got peer status: {:?}", peers),
-              Some(LogLevel::Debug));
-    let result = match peers {
-        Ok(result) => result,
+    match peers {
+        Ok(peer_list) => {
+            // Ensure all peers are in a PeerInCluster state
+            juju::log(&format!("Got peer status: {:?}", peer_list),
+                      Some(LogLevel::Debug));
+            return peer_list.iter().all(|peer| peer.status == gluster::State::PeerInCluster);
+        }
         Err(err) => {
             juju::log(&format!("peers_are_ready failed to get peer status: {:?}", err),
                       Some(LogLevel::Error));
             return false;
         }
-    };
-
-    // Ensure all peers are in a PeerInCluster state
-    result.iter().all(|peer| peer.status == gluster::State::PeerInCluster)
+    }
 }
 
 // HDD's are so slow that sometimes the peers take long to join the cluster.
@@ -338,15 +334,7 @@ fn probe_in_units(existing_peers: &Vec<gluster::Peer>,
         let address = juju::relation_get_by_unit(&"private-address".to_string(), &unit)
             .map_err(|e| e.to_string())?;
         let address_trimmed = address.trim().to_string();
-
-        let mut already_probed: bool = false;
-
-        // I think the localhost test is failing
-        for peer in existing_peers {
-            if peer.hostname == address_trimmed {
-                already_probed = true;
-            }
-        }
+        let already_probed = existing_peers.iter().any(|peer| peer.hostname == address_trimmed);
 
         // Probe the peer in
         if !already_probed {
@@ -372,15 +360,8 @@ fn find_new_peers(peers: &Vec<gluster::Peer>, volume_info: &gluster::Volume) -> 
     let mut new_peers: Vec<gluster::Peer> = Vec::new();
     for peer in peers {
         // If this peer is already in the volume, skip it
-        let mut new_peer: bool = true;
-
-        for brick in volume_info.bricks.iter() {
-            if brick.peer.uuid == peer.uuid {
-                new_peer = false;
-                break;
-            }
-        }
-        if new_peer {
+        let existing_peer = volume_info.bricks.iter().any(|brick| brick.peer.uuid == peer.uuid);
+        if !existing_peer {
             new_peers.push(peer.clone());
         }
     }
