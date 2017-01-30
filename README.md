@@ -32,6 +32,18 @@ This charm makes use of [juju storage](https://jujucharms.com/docs/1.25/storage)
         The default here is 2
         If you don't know what any of these mean don't worry about it. The defaults are sane.
 
+# Actions
+This charm several actions to help manage your Gluster cluster.
+1. Creating volume quotes. Example:
+`juju action do --unit gluster/0 create-volume-quota volume=test usage-limit=1000MB`
+2. Deleting volume quotas. Example:
+`juju action do --unit gluster/0 delete-volume-quota volume=test`
+3. Listing the current volume quotas.  Example:
+`juju action do --unit gluster/0 list-volume-quotas volume=test`
+4. Setting volume options.  This can be used to set several volume options at
+once.  Example:
+`juju action do --unit gluster/0 set-volume-options volume=test performance-cache-size=1GB performance-write-behind-window-size=1MB`
+
 # Building from Source
 The charm comes packaged with an already built binary in ./hooks/main which is built for x86-64.
 A rebuild would be required for other architectures.
@@ -96,6 +108,28 @@ show you how to install the glusterfs packages.
 On your juju host you can mount Gluster with fuse like so:
 
     mount -t glusterfs <ip or hostname of unit>:/<volume_name> mount_point/
+
+## High Availability
+There's 3 ways you can achieve high availability with Gluster.  
+
+1. The first an easiest method is to simply use the glusterfs fuse mount on all
+clients.  This has the advantage of knowing where all servers in the cluster
+are at and will reconnect as needed and failover gracefully.
+2. Using virtual ip addresses with a DNS round robin A record.  This solution
+applies to NFSv3.  This method is more complicated but has the advantage of
+being usable on clients that only support NFSv3.  NFSv3 is stateless and
+this can be used to your advantage by floating virtual ip addresses that
+failover quickly.  To use this setting please set the virtual_ip_addresses
+config.yaml setting after reading the usage.
+3. Using the [Gluster coreutils](https://github.com/gluster/glusterfs-coreutils).  
+If you do not need a mount point then this is a viable option.  
+glusterfs-coreutils provides a set of basic utilities such as cat, cp, flock,
+ls, mkdir, rm, stat and tail that are implemented specifically using the
+GlusterFS API commonly known as libgfapi. These utilities can be used either
+inside a gluster remote shell or as standalone commands with 'gf' prepended to
+their respective base names. Example usage is shown here:
+[Docs](https://gluster.readthedocs.io/en/latest/Administrator%20Guide/GlusterFS%20Coreutils/)
+
 
 ## Notes:
 If you're using containers to test Gluster you might need to edit /etc/default/lxc-net
