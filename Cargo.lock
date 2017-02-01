@@ -4,7 +4,7 @@ version = "0.1.0"
 dependencies = [
  "chrono 0.2.25 (registry+https://github.com/rust-lang/crates.io-index)",
  "debian 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "gluster 0.6.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gluster 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "init-daemon 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ipnetwork 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.5.9 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -93,7 +93,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "gluster"
-version = "0.6.6"
+version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "byteorder 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -550,7 +550,7 @@ dependencies = [
 "checksum debian 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "8c6e75b24668059301069b6231a9d51c95ddb54a27e19c6eb89f9c9d3c672b93"
 "checksum dtoa 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "0dd841b58510c9618291ffa448da2e4e0f699d984d436122372f446dae62263d"
 "checksum either 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "3d2b503c86dad62aaf414ecf2b8c527439abedb3f8d812537f0b12bfd6f32a91"
-"checksum gluster 0.6.6 (registry+https://github.com/rust-lang/crates.io-index)" = "f07956ab08682686b226efabfdd9acd6b4e016eb113d6d0761e0c94f005f2b4c"
+"checksum gluster 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)" = "b48b4edd2791dcb3b2d52aa0f01a90423b6709e7e4baef0b270f9389d83ffba1"
 "checksum idna 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "1053236e00ce4f668aeca4a769a09b3bf5a682d802abd6f3cb39374f6b162c11"
 "checksum init-daemon 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c403eb960d1fd543b064fd6abbb6990237d6b415ebf9a9732d758c85d3cae51f"
 "checksum ipnetwork 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)" = "92e3e13f0318d4e99b378f54646f8a13a5a37c2f697f14700593161cc0d7ca01"

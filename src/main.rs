@@ -698,6 +698,14 @@ fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
             // Starting in gluster 3.8 NFS is disabled in favor of ganesha.  I'd like to stick
             // with the legacy version a bit longer.
             settings.push(GlusterOption::NfsDisable(Toggle::Off));
+            settings.push(GlusterOption::DiagnosticsLatencyMeasurement(Toggle::On));
+            settings.push(GlusterOption::DiagnosticsCountFopHits(Toggle::On));
+            settings.push(GlusterOption::DiagnosticsFopSampleInterval(1));
+            // Dump FOP stats every other second
+            settings.push(GlusterOption::DiagnosticsStatsDumpInterval(2));
+            // 1HR DNS timeout
+            settings.push(GlusterOption::DiagnosticsStatsDnscacheTtlSec(3600));
+
             // Set the split brain policy if requested
             if let Ok(splitbrain_policy) = juju::config_get("splitbrain_policy") {
                 match SplitBrainPolicy::from_str(&splitbrain_policy) {
@@ -734,6 +742,8 @@ fn create_gluster_volume(volume_name: &str, peers: Vec<gluster::Peer>) -> Result
                               Some(LogLevel::Info));
                     status_set!(Maintenance "Create volume succeeded");
                     start_gluster_volume(&volume_name)?;
+                    // Poke the other peers to update their status
+                    juju::relation_set("started", "true").map_err(|e| e.to_string())?;
                     return Ok(());
                 }
                 Status::WaitForMorePeers => {
@@ -797,6 +807,8 @@ fn server_changed() -> Result<(), String> {
                         juju::log(&format!("Expand volume succeeded.  Return code: {}", v),
                                   Some(LogLevel::Info));
                         status_set!(Active "Expand volume succeeded.");
+                        // Poke the other peers to update their status
+                        juju::relation_set("started", "true").map_err(|e| e.to_string())?;
                         // Ensure the cluster is mounted
                         mount_cluster(&volume_name)?;
                         setup_ctdb()?;
