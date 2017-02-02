@@ -40,7 +40,7 @@ options:
       This option set automatic resolution to split-brains in replica volumes
       Options include: ctime|mtime|size|majority. Set this to none to disable.
       Example: Setting this to "size" will pick the largest size automatically
-      and delete the smaller size file. "majority" picks a file with identical 
+      and delete the smaller size file. "majority" picks a file with identical
       mtime and size in more than half the number of bricks in the replica.
   source:
     type: string
@@ -84,3 +84,8 @@ options:
       machine that is still up.  Note however that there are implications here
       for load balancing and moving an additional ip address to a server
       could increase load on it.
+  cifs:
+    type: boolean
+    description: |
+      Enable CIFS exporting of the volume. This option will enable windows
+      clients to access the volume.

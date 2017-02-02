@@ -2,6 +2,7 @@ mod actions;
 mod apt;
 mod block;
 mod ctdb;
+mod samba;
 mod upgrade;
 
 extern crate debian;
@@ -33,6 +34,7 @@ use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
 use itertools::Itertools;
 use log::LogLevel;
 use resolve::address::address_name;
+use samba::setup_samba;
 
 
 #[cfg(test)]
@@ -241,11 +243,11 @@ fn get_cluster_networks() -> Result<Vec<ctdb::VirtualIp>, String> {
 
 // Add all the peers in the gluster cluster to the ctdb cluster
 fn setup_ctdb() -> Result<(), String> {
-    juju::log("setting up ctdb", Some(LogLevel::Debug));
     if juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?.is_empty() {
         // virtual_ip_addresses isn't set.  Skip setting ctdb up
         return Ok(());
     }
+    juju::log("setting up ctdb", Some(LogLevel::Debug));
     let peers = gluster::peer_list().map_err(|e| e.to_string())?;
     juju::log(&format!("Got ctdb peer list: {:?}", peers),
               Some(LogLevel::Debug));
@@ -808,10 +810,11 @@ fn server_changed() -> Result<(), String> {
                                   Some(LogLevel::Info));
                         status_set!(Active "Expand volume succeeded.");
                         // Poke the other peers to update their status
-                        juju::relation_set("started", "true").map_err(|e| e.to_string())?;
+                        juju::relation_set("expanded", "true").map_err(|e| e.to_string())?;
                         // Ensure the cluster is mounted
                         mount_cluster(&volume_name)?;
                         setup_ctdb()?;
+                        setup_samba(&volume_name)?;
                         return Ok(());
                     }
                     Err(e) => {
@@ -834,9 +837,21 @@ fn server_changed() -> Result<(), String> {
                       Some(LogLevel::Info));
             status_set!(Maintenance format!("Creating volume {}", volume_name));
             create_gluster_volume(&volume_name, peers)?;
+            mount_cluster(&volume_name)?;
+            setup_ctdb()?;
+            setup_samba(&volume_name)?;
         }
         return Ok(());
     } else {
+        // Non leader units
+        let vol_started = juju::relation_get("started").map_err(|e| e.to_string())?;
+        if !vol_started.is_empty() {
+            mount_cluster(&volume_name)?;
+            // Setup ctdb and samba after the volume comes up on non leader units
+            setup_ctdb()?;
+            setup_samba(&volume_name)?;
+        }
+
         return Ok(());
     }
 }
