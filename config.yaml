@@ -20,7 +20,7 @@ options:
         DistributedAndDisperse.
   replication_level:
     type: int
-    default: 2
+    default: 3
     description: |
       This sets how many replicas of the data should be stored in the cluster.
       Generally 2 or 3 will be fine for almost all use cases.  Greater than 3
