@@ -2,6 +2,7 @@ mod actions;
 mod apt;
 mod block;
 mod ctdb;
+mod metrics;
 mod samba;
 mod upgrade;
 
@@ -16,6 +17,7 @@ extern crate resolve;
 extern crate uuid;
 
 use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
+use metrics::collect_metrics;
 
 use std::env;
 use std::fs;
@@ -1097,6 +1099,7 @@ fn main() {
         let hook_registry: Vec<juju::Hook> = vec![
             hook!("brick-storage-attached", brick_attached),
             hook!("brick-storage-detaching", brick_detached),
+            hook!("collect-metrics", collect_metrics),
             hook!("config-changed", config_changed),
             hook!("create-volume-quota", enable_volume_quota),
             hook!("delete-volume-quota", disable_volume_quota),
