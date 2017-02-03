@@ -34,6 +34,7 @@ This charm makes use of [juju storage](https://jujucharms.com/docs/1.25/storage)
 
 # Actions
 This charm several actions to help manage your Gluster cluster.
+
 1. Creating volume quotes. Example:
 `juju action do --unit gluster/0 create-volume-quota volume=test usage-limit=1000MB`
 2. Deleting volume quotas. Example:
