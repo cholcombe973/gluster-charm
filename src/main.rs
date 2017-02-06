@@ -12,7 +12,6 @@ extern crate ipnetwork;
 extern crate itertools;
 #[macro_use]
 extern crate juju;
-extern crate log;
 extern crate resolve;
 extern crate serde_yaml;
 extern crate uuid;
@@ -36,7 +35,6 @@ use debian::version::Version;
 use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
 use ipnetwork::IpNetwork;
 use itertools::Itertools;
-use log::LogLevel;
 use resolve::address::address_name;
 use samba::setup_samba;
 

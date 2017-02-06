@@ -8,10 +8,9 @@ dependencies = [
  "init-daemon 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ipnetwork 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.5.9 (registry+https://github.com/rust-lang/crates.io-index)",
- "juju 0.5.15",
+ "juju 0.5.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "libudev 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pnet 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -161,6 +160,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "juju"
 version = "0.5.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "charmhelpers 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -629,6 +629,7 @@ dependencies = [
 "checksum itertools 0.5.9 (registry+https://github.com/rust-lang/crates.io-index)" = "d95557e7ba6b71377b0f2c3b3ae96c53f1b75a926a6901a500f557a370af730a"
 "checksum itoa 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ae3088ea4baeceb0284ee9eea42f591226e6beaecf65373e41b38d95a1b8e7a1"
 "checksum juju 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)" = "d0b4692d90fcfe6c60e9f7d49d830d485b7c3765cf996dd4ea90af071f891c72"
+"checksum juju 0.5.15 (registry+https://github.com/rust-lang/crates.io-index)" = "3b412c59d778ff5145607fb87d4cd047ecc665e16925ac7cca956115c96dc796"
 "checksum kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7507624b29483431c0ba2d82aece8ca6cdba9382bff4ddd0f7490560c056098d"
 "checksum libc 0.2.20 (registry+https://github.com/rust-lang/crates.io-index)" = "684f330624d8c3784fb9558ca46c4ce488073a8d22450415c5eb4f4cfb0d11b5"
 "checksum libudev 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ea626d3bdf40a1c5aee3bcd4f40826970cae8d80a8fec934c82a63840094dcfe"

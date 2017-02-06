@@ -4,7 +4,6 @@ extern crate juju;
 
 use std::process::Command;
 
-use log::LogLevel;
 use self::init_daemon::{detect_daemon, Daemon};
 use super::debian::version::Version;
 
@@ -13,8 +12,7 @@ pub fn add_source(source_string: &str) -> Result<(), String> {
     let mut cmd = Command::new("add-apt-repository");
     cmd.arg("-y");
     cmd.arg(source_string);
-    juju::log(&format!("add-apt-repository cmd: {:?}", cmd),
-              Some(LogLevel::Debug));
+    log!(format!("add-apt-repository cmd: {:?}", cmd), Debug);
     let output = cmd.output().map_err(|e| e.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).into_owned());
