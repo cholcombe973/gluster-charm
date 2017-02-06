@@ -1,5 +1,6 @@
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::path::Path;
 
 use super::apt::{apt_install, service_start};
 use super::juju;
@@ -23,6 +24,26 @@ pub fn render_samba_configuration<T: Write>(f: &mut T,
     Ok(bytes_written)
 }
 
+fn samba_config_changed(volume_name: &str) -> Result<bool, ::std::io::Error> {
+    if Path::new("/etc/samba/smb.conf").exists() {
+        // Lets check if the smb.conf matches what we're going to write.  If so then
+        // it was already setup and there's nothing to do
+        let mut f = File::open("/etc/samba/smb.conf")?;
+        let mut existing_config: Vec<u8> = Vec::new();
+        f.read_to_end(&mut existing_config)?;
+        let mut new_config: Vec<u8> = Vec::new();
+        let _ = render_samba_configuration(&mut new_config, volume_name)?;
+        if new_config == existing_config {
+            // configs are identical
+            return Ok(false);
+        } else {
+            return Ok(true);
+        }
+    }
+    // Config doesn't exist.
+    return Ok(true);
+}
+
 pub fn setup_samba(volume_name: &str) -> Result<(), String> {
     let cifs_config = juju::config_get("cifs").map_err(|e| e.to_string())?;
     if cifs_config != "True" {
@@ -30,6 +51,11 @@ pub fn setup_samba(volume_name: &str) -> Result<(), String> {
         log!("Samba is not enabled");
         return Ok(());
     }
+    if !samba_config_changed(volume_name).map_err(|e| e.to_string())? {
+        log!("Samba is already setup.  Not reinstalling");
+        return Ok(());
+    }
+
     status_set!(Maintenance "Installing Samba");
     apt_install(vec!["samba"])?;
     status_set!(Maintenance "Configuring Samba");
