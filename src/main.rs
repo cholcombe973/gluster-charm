@@ -14,15 +14,17 @@ extern crate itertools;
 extern crate juju;
 extern crate log;
 extern crate resolve;
+extern crate serde_yaml;
 extern crate uuid;
 
 use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
 use metrics::collect_metrics;
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::fs::{create_dir, File};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::IpAddr;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -174,9 +176,42 @@ fn get_config_value(name: &str) -> Result<String, String> {
     }
 }
 
+// sysctl: a YAML-formatted string of sysctl options eg "{ 'kernel.max_pid': 1337 }"
+fn create_sysctl<T: Write>(sysctl: String, f: &mut T) -> Result<usize, String> {
+    let deserialized_map: BTreeMap<String, String> =
+        serde_yaml::from_str(&sysctl).map_err(|e| e.to_string())?;
+
+    let mut bytes_written = 0;
+    for (key, value) in deserialized_map {
+        bytes_written += f.write(&format!("{}={}\n", key, value).as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(bytes_written)
+}
+
 fn config_changed() -> Result<(), String> {
     check_for_upgrade()?;
+    check_for_sysctl()?;
     return Ok(());
+}
+
+fn check_for_sysctl() -> Result<(), String> {
+    let config = juju::Config::new().map_err(|e| e.to_string())?;
+    if config.changed("sysctl").map_err(|e| e.to_string())? {
+        let config_path = Path::new("/etc/sysctl.d/50-gluster-charm.conf");
+        let mut sysctl_file = File::create(config_path).map_err(|e| e.to_string())?;
+        let sysctl_dict = juju::config_get("sysctl").map_err(|e| e.to_string())?;
+        create_sysctl(sysctl_dict, &mut sysctl_file)?;
+        // Reload sysctl's
+        let mut cmd = std::process::Command::new("sysctl");
+        cmd.arg("-p");
+        cmd.arg(&config_path.to_string_lossy().into_owned());
+        let output = cmd.output().map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+    }
+    Ok(())
 }
 
 // If the config has changed this will initiated a rolling upgrade
