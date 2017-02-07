@@ -134,24 +134,22 @@ mod tests {
         let result = super::brick_and_server_cartesian_product(&peers, &paths);
         println!("brick_and_server_cartesian_product: {:?}", result);
         assert_eq!(result,
-                   vec![
-                       gluster::Brick{
+                   vec![gluster::Brick {
                             peer: peer1.clone(),
                             path: PathBuf::from("/mnt/brick1"),
                         },
-                        gluster::Brick{
+                        gluster::Brick {
                             peer: peer2.clone(),
                             path: PathBuf::from("/mnt/brick1"),
                         },
-                        gluster::Brick{
+                        gluster::Brick {
                             peer: peer1.clone(),
                             path: PathBuf::from("/mnt/brick2"),
                         },
-                        gluster::Brick{
+                        gluster::Brick {
                             peer: peer2.clone(),
                             path: PathBuf::from("/mnt/brick2"),
-                        },
-                    ]);
+                        }]);
     }
 }
 
@@ -1098,21 +1096,20 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() > 0 {
         // Register our hooks with the Juju library
-        let hook_registry: Vec<juju::Hook> = vec![
-            hook!("brick-storage-attached", brick_attached),
-            hook!("brick-storage-detaching", brick_detached),
-            hook!("collect-metrics", collect_metrics),
-            hook!("config-changed", config_changed),
-            hook!("create-volume-quota", enable_volume_quota),
-            hook!("delete-volume-quota", disable_volume_quota),
-            hook!("fuse-relation-joined", fuse_relation_joined),
-            hook!("list-volume-quotas", list_volume_quotas),
-            hook!("nfs-relation-joined", nfs_relation_joined),
-            hook!("server-relation-changed", server_changed),
-            hook!("server-relation-departed", server_removed),
-            hook!("set-volume-options", set_volume_options),
-            hook!("update-status", update_status),
-        ];
+        let hook_registry: Vec<juju::Hook> =
+            vec![hook!("brick-storage-attached", brick_attached),
+                 hook!("brick-storage-detaching", brick_detached),
+                 hook!("collect-metrics", collect_metrics),
+                 hook!("config-changed", config_changed),
+                 hook!("create-volume-quota", enable_volume_quota),
+                 hook!("delete-volume-quota", disable_volume_quota),
+                 hook!("fuse-relation-joined", fuse_relation_joined),
+                 hook!("list-volume-quotas", list_volume_quotas),
+                 hook!("nfs-relation-joined", nfs_relation_joined),
+                 hook!("server-relation-changed", server_changed),
+                 hook!("server-relation-departed", server_removed),
+                 hook!("set-volume-options", set_volume_options),
+                 hook!("update-status", update_status)];
 
         let result = juju::process_hooks(hook_registry);
 
