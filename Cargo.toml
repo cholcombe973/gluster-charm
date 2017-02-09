@@ -13,13 +13,14 @@ itertools = "*"
 juju = "*"
 libc = "*"
 libudev = "*"
-log = "*"
 nix = "*"
 pnet = "~0.16"
 rand = "~0.3"
 regex = "*"
 resolve = "~0.1"
 rustc-serialize = "*"
+serde = "^0.9"
+serde_yaml = "^0.6"
 uuid = { version = "^0.3", features = ["v4"] }
 
 # The development profile, used for `cargo build`

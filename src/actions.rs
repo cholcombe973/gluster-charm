@@ -1,6 +1,5 @@
 use gluster;
 use juju;
-use log::LogLevel;
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -84,8 +83,7 @@ pub fn list_volume_quotas() -> Result<(), String> {
         Ok(v) => v,
         Err(e) => {
             // Notify the user of the failure and then return the error up the stack
-            juju::log(&format!("Failed to get volume param: {:?}", e),
-                      Some(LogLevel::Debug));
+            log!(format!("Failed to get volume param: {:?}", e));
             juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
             return Err(e.to_string());
         }
@@ -106,14 +104,12 @@ pub fn list_volume_quotas() -> Result<(), String> {
                 return Ok(());
             }
             Err(e) => {
-                juju::log(&format!("Quota list failed: {:?}", e),
-                          Some(LogLevel::Error));
+                log!(&format!("Quota list failed: {:?}", e), Error);
                 return Err(e.to_string());
             }
         }
     } else {
-        juju::log(&format!("Quotas are disabled on volume: {}", volume),
-                  Some(LogLevel::Debug));
+        log!(format!("Quotas are disabled on volume: {}", volume));
         return Ok(());
     }
 }

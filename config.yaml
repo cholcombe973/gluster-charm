@@ -89,3 +89,12 @@ options:
     description: |
       Enable CIFS exporting of the volume. This option will enable windows
       clients to access the volume.
+  sysctl:
+    type: string
+    default: '{ vm.vfs_cache_pressure: 100, vm.swappiness: 1 }'
+    description: |
+      YAML-formatted associative array of sysctl key/value pairs to be set
+      persistently. By default we set pid_max, max_map_count and
+      threads-max to a high value to avoid problems with large numbers (>20)
+      of OSDs recovering. very large clusters should set those values even
+      higher (e.g. max for kernel.pid_max is 4194303).

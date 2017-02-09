@@ -20,7 +20,6 @@ use self::uuid::Uuid;
 use super::apt;
 use super::debian::version::Version;
 use super::get_glusterfs_version;
-use log::LogLevel;
 
 fn get_local_uuid() -> Result<Uuid, String> {
     // File looks like this:
@@ -48,15 +47,13 @@ pub fn roll_cluster(new_version: &Version) -> Result<(), String> {
     // If I'm not first in line I'll wait a random time between 5-30 seconds
     // and test to see if the previous peer is upgraded yet.
     //
-    juju::log(&format!("roll_cluster called with {}", new_version),
-              Some(LogLevel::Debug));
+    log!(format!("roll_cluster called with {}", new_version));
     let volume_name = juju::config_get(&"volume_name".to_string()).map_err(|e| e.to_string())?;
     let my_uuid = get_local_uuid()?;
 
     let volume_bricks = volume_info(&volume_name).map_err(|e| e.to_string())?.bricks;
     let mut peer_list: Vec<Peer> = volume_bricks.iter().map(|x| x.peer.clone()).collect();
-    juju::log(&format!("peer_list: {:?}", peer_list),
-              Some(LogLevel::Debug));
+    log!(format!("peer_list: {:?}", peer_list));
 
     // Sort by UUID
     peer_list.sort();
@@ -64,13 +61,12 @@ pub fn roll_cluster(new_version: &Version) -> Result<(), String> {
     let position = match peer_list.iter().position(|x| x.uuid == my_uuid) {
         Some(p) => p,
         None => {
-            juju::log(&format!("Unable to determine upgrade position from: {:?}", peer_list),
-                      Some(LogLevel::Error));
+            log!(format!("Unable to determine upgrade position from: {:?}", peer_list),
+                 Error);
             return Err("Unable to determine upgrade position".to_string());
         }
     };
-    juju::log(&format!("upgrade position: {}", position),
-              Some(LogLevel::Debug));
+    log!(format!("upgrade position: {}", position));
     if position == 0 {
         // I'm first!  Roll
         // First set a key to inform others I'm about to roll
@@ -94,10 +90,8 @@ pub fn upgrade_peer(new_version: &Version) -> Result<(), String> {
             status_type: juju::StatusType::Maintenance,
             message: "Upgrading peer".to_string(),
         }).map_err(|e| e.to_string())?;
-    juju::log(&format!("Current ceph version is {}", current_version),
-              Some(LogLevel::Debug));
-    juju::log(&format!("Upgrading to: {}", new_version),
-              Some(LogLevel::Debug));
+    log!(format!("Current ceph version is {}", current_version));
+    log!(format!("Upgrading to: {}", new_version));
 
     apt::service_stop("glusterfs-server")?;
     apt::apt_install(vec!["glusterfs-server", "glusterfs-common", "glusterfs-client"])?;
@@ -109,25 +103,23 @@ pub fn upgrade_peer(new_version: &Version) -> Result<(), String> {
 fn lock_and_roll(my_uuid: &Uuid, version: &Version) -> Result<(), String> {
     let start_timestamp = Local::now();
 
-    juju::log(&format!("gluster_key_set {}_{}_start {}",
-                       my_uuid,
-                       version,
-                       start_timestamp),
-              Some(LogLevel::Debug));
+    log!(format!("gluster_key_set {}_{}_start {}",
+                 my_uuid,
+                 version,
+                 start_timestamp));
     gluster_key_set(&format!("{}_{}_start", &my_uuid, version), start_timestamp)?;
-    juju::log("Rolling", Some(LogLevel::Debug));
+    log!("Rolling");
 
     // This should be quick
     upgrade_peer(&version)?;
-    juju::log("Done", Some(LogLevel::Debug));
+    log!("Done");
 
     let stop_timestamp = Local::now();
     // Set a key to inform others I am finished
-    juju::log(&format!("gluster_key_set {}_{}_done {}",
-                       my_uuid,
-                       version,
-                       stop_timestamp),
-              Some(LogLevel::Debug));
+    log!(format!("gluster_key_set {}_{}_done {}",
+                 my_uuid,
+                 version,
+                 stop_timestamp));
     gluster_key_set(&format!("{}_{}_done", &my_uuid, version), stop_timestamp)?;
 
     return Ok(());
@@ -145,23 +137,22 @@ fn gluster_key_get(key: &str) -> Option<DateTime<Local>> {
     let mut s = String::new();
     match f.read_to_string(&mut s) {
         Ok(bytes) => {
-            juju::log(&format!("gluster_key_get read {} bytes", bytes),
-                      Some(LogLevel::Debug));
+            log!(format!("gluster_key_get read {} bytes", bytes));
         }
         Err(e) => {
-            juju::log(&format!("gluster_key_get failed to read file \
+            log!(format!("gluster_key_get failed to read file \
                                 /mnt/glusterfs/.upgraded/{}. Error: {}",
-                               key,
-                               e),
-                      Some(LogLevel::Error));
+                         key,
+                         e),
+                 Error);
             return None;
         }
     };
     let decoded: DateTime<Local> = match json::decode(&s) {
         Ok(d) => d,
         Err(e) => {
-            juju::log(&format!("Failed to decode json file in gluster_key_get(): {}", e),
-                      Some(LogLevel::Error));
+            log!(format!("Failed to decode json file in gluster_key_get(): {}", e),
+                 Error);
             return None;
         }
     };
@@ -189,15 +180,13 @@ fn gluster_key_exists(key: &str) -> bool {
 }
 
 pub fn wait_on_previous_node(previous_node: &Peer, version: &Version) -> Result<(), String> {
-    juju::log(&format!("Previous node is: {:?}", previous_node),
-              Some(LogLevel::Debug));
+    log!(format!("Previous node is: {:?}", previous_node));
 
     let mut previous_node_finished =
         gluster_key_exists(&format!("{}_{}_done", previous_node.uuid, version));
 
     while !previous_node_finished {
-        juju::log(format!("{} is not finished. Waiting", previous_node.uuid),
-                  Some(LogLevel::Debug));
+        log!(format!("{} is not finished. Waiting", previous_node.uuid));
         // Has this node been trying to upgrade for longer than
         // 10 minutes?
         // If so then move on and consider that node dead.
@@ -214,12 +203,11 @@ pub fn wait_on_previous_node(previous_node: &Peer, version: &Version) -> Result<
                 if (current_timestamp - Duration::minutes(10)) > previous_start_time {
                     // Previous node is probably dead.  Lets move on
                     if previous_node_start_time.is_some() {
-                        juju::log(&format!("Waited 10 mins on node {}. current time: {} > \
+                        log!(format!("Waited 10 mins on node {}. current time: {} > \
                                             previous node start time: {} Moving on",
-                                           previous_node.uuid,
-                                           (current_timestamp - Duration::minutes(10)),
-                                           previous_start_time),
-                                  Some(LogLevel::Debug));
+                                     previous_node.uuid,
+                                     (current_timestamp - Duration::minutes(10)),
+                                     previous_start_time));
                         return Ok(());
                     }
                 } else {
@@ -228,8 +216,7 @@ pub fn wait_on_previous_node(previous_node: &Peer, version: &Version) -> Result<
                     let between = Range::new(5, 30);
                     let mut rng = rand::thread_rng();
                     let wait_time = between.ind_sample(&mut rng);
-                    juju::log(format!("waiting for {} seconds", wait_time),
-                              Some(LogLevel::Debug));
+                    log!(format!("waiting for {} seconds", wait_time));
                     thread::sleep(::std::time::Duration::from_secs(wait_time));
                     previous_node_finished =
                         gluster_key_exists(&format!("{}_{}_done", previous_node.uuid, version));
