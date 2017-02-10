@@ -97,6 +97,7 @@ pub fn ipnetwork_from_str(s: &str) -> Result<IpNetwork, String> {
 
 /// Return all virtual ip cidr networks that are being managed by ctdb
 /// located at file f. /etc/ctdb/public_addresses is the usual location
+#[allow(dead_code)]
 pub fn get_virtual_addrs<T: Read>(f: &mut T) -> Result<Vec<VirtualIp>, String> {
     let mut networks: Vec<VirtualIp> = Vec::new();
     let mut buf = String::new();
@@ -232,6 +233,7 @@ pub fn get_interface_for_address(cidr_address: IpNetwork) -> Option<String> {
 /// Constructs a new `IpNetwork` from a given &str with a prefix denoting the
 /// network size.  If the prefix is larger than 32 (for IPv4) or 128 (for IPv6), this
 /// will raise an `IpNetworkError::InvalidPrefix` error.
+#[allow(dead_code)]
 pub fn parse_ipnetwork(s: &str) -> Result<IpNetwork, IpNetworkError> {
     let v4addr: Result<Ipv4Network, IpNetworkError> = s.parse();
     let v6addr: Result<Ipv6Network, IpNetworkError> = s.parse();
@@ -288,6 +290,7 @@ fn test_parse_virtual_addrs_v6() {
 
 /// Return all ctdb nodes that are contained in the file f
 /// /etc/ctdb/nodes is the usual location
+#[allow(dead_code)]
 pub fn get_ctdb_nodes<T: Read>(f: &mut T) -> Result<Vec<IpAddr>, String> {
     let mut addrs: Vec<IpAddr> = Vec::new();
     let mut buf = String::new();

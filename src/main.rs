@@ -155,6 +155,7 @@ mod tests {
 
 // Need more expressive return values so we can wait on peers
 #[derive(Debug)]
+#[allow(dead_code)]
 enum Status {
     Created,
     WaitForMorePeers,
@@ -912,6 +913,17 @@ fn brick_attached() -> Result<(), String> {
             };
             block::format_block_device(&brick_path, &filesystem_type).map_err(|e| e.to_string())?;
         }
+        block::FilesystemType::Zfs => {
+            log!(format!("Formatting block device with ZFS: {:?}", &brick_path),
+                 Info);
+            status_set!(Maintenance
+                format!("Formatting block device with ZFS: {:?}", &brick_path));
+            let filesystem_type = block::Filesystem::Zfs {
+                compression: None,
+                block_size: None,
+            };
+            block::format_block_device(&brick_path, &filesystem_type).map_err(|e| e.to_string())?;
+        }
         _ => {
             log!(format!("Formatting block device with XFS: {:?}", &brick_path),
                  Info);
@@ -936,7 +948,10 @@ fn brick_attached() -> Result<(), String> {
         create_dir(&mount_path).map_err(|e| e.to_string())?;
     }
 
-    block::mount_device(&device_info, &mount_path)?;
+    // ZFS mounts the filesytem for us
+    if filesystem_type != block::FilesystemType::Zfs {
+        block::mount_device(&device_info, &mount_path)?;
+    }
     return Ok(());
 }
 
