@@ -39,6 +39,20 @@ list-volume-quotas:
       description: The volume to list quotas on
   required: [volume]
   additionalProperties: false
+rebalance-volume:
+  description: |
+    After expanding or shrinking a volume you need to rebalance the data
+    among the servers. New directories created after expanding or
+    shrinking of the volume will be evenly distributed automatically.
+    For all the existing directories, the distribution can be fixed by
+    rebalancing the layout and/or data.  This action should be run
+    in a maintenance window because client IO will be impacted.
+  params:
+    volume:
+      type: string
+      description: The volume to rebalance
+  required: [volume]
+  additionalProperties: false
 set-volume-options:
   description: |
     You can tune volume options, as needed, while the cluster is online
