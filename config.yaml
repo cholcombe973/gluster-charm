@@ -30,7 +30,8 @@ options:
     default: xfs
     description: |
       The filesystem type to use for each one of the bricks.  Can be either
-      xfs, btrfs, or ext4
+      zfs, xfs, btrfs, or ext4. Note that zfs only works with ubuntu 16.04 or
+      newer
   splitbrain_policy:
     type: string
     default: size

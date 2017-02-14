@@ -1,16 +1,18 @@
 extern crate juju;
 extern crate libudev;
 extern crate regex;
+
 use self::regex::Regex;
+use super::apt::apt_install;
 use uuid::Uuid;
 
-use std::fs;
-use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 // Formats a block device at Path p with XFS
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum MetadataProfile {
     Raid0,
     Raid1,
@@ -39,11 +41,12 @@ pub enum MediaType {
     Unknown,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum FilesystemType {
     Btrfs,
     Ext4,
     Xfs,
+    Zfs,
     Unknown,
 }
 
@@ -53,6 +56,7 @@ impl FilesystemType {
             "btrfs" => FilesystemType::Btrfs,
             "ext4" => FilesystemType::Ext4,
             "xfs" => FilesystemType::Xfs,
+            "zfs" => FilesystemType::Zfs,
             _ => FilesystemType::Unknown,
         }
     }
@@ -89,12 +93,26 @@ pub enum Filesystem {
         inode_size: Option<u64>,
         force: bool,
     },
+    Zfs {
+        /// The default blocksize for volumes is 8 Kbytes. Any
+        /// power of 2 from 512 bytes to 128 Kbytes is valid.
+        block_size: Option<u64>,
+        /// Enable compression on the volume. Default is false
+        compression: Option<bool>,
+    },
 }
 
 impl Filesystem {
+    #[allow(dead_code)]
     pub fn new(name: &str) -> Filesystem {
         match name.trim() {
             // Defaults.  Can be changed as needed by the caller
+            "zfs" => {
+                Filesystem::Zfs {
+                    block_size: None,
+                    compression: None,
+                }
+            }
             "xfs" => {
                 Filesystem::Xfs {
                     inode_size: None,
@@ -124,32 +142,11 @@ impl Filesystem {
     }
 }
 
-fn run_command(command: &str, arg_list: &Vec<String>, as_root: bool) -> Output {
-    if as_root {
-        let mut cmd = Command::new("sudo");
-        cmd.arg(command);
-        for arg in arg_list {
-            cmd.arg(&arg);
-        }
-        let output = cmd.output().unwrap_or_else(|e| panic!("failed to execute process: {} ", e));
-        return output;
-    } else {
-        let mut cmd = Command::new(command);
-        for arg in arg_list {
-            cmd.arg(&arg);
-        }
-        let output = cmd.output().unwrap_or_else(|e| panic!("failed to execute process: {} ", e));
-        return output;
-    }
-}
-
-// Install xfsprogs, btrfs-tools, etc for mkfs to succeed
-fn install_utils() -> Result<i32, String> {
-    let arg_list = vec!["install".to_string(),
-                        "-y".to_string(),
-                        "btrfs-tools".to_string(),
-                        "xfsprogs".to_string()];
-    return process_output(run_command("/usr/bin/apt-get", &arg_list, true));
+fn run_command<S: AsRef<OsStr>>(command: &str, arg_list: &[S]) -> Output {
+    let mut cmd = Command::new(command);
+    cmd.args(arg_list);
+    let output = cmd.output().unwrap_or_else(|e| panic!("failed to execute process: {} ", e));
+    return output;
 }
 
 // This assumes the device is formatted at this point
@@ -182,7 +179,7 @@ pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
     //
     arg_list.push(mount_point.to_string());
 
-    return process_output(run_command("mount", &arg_list, true));
+    return process_output(run_command("mount", &arg_list));
 }
 
 fn process_output(output: Output) -> Result<i32, String> {
@@ -199,31 +196,19 @@ fn process_output(output: Output) -> Result<i32, String> {
 pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<i32, String> {
     match filesystem {
         &Filesystem::Btrfs { ref metadata_profile, ref leaf_size, ref node_size } => {
-            let mut arg_list: Vec<String> = Vec::new();
-
-            arg_list.push("-m".to_string());
-            arg_list.push(metadata_profile.clone().to_string());
-
-            arg_list.push("-l".to_string());
-            arg_list.push(leaf_size.to_string());
-
-            arg_list.push("-n".to_string());
-            arg_list.push(node_size.to_string());
-
-            arg_list.push(device.to_string_lossy().to_string());
-            // Check if mkfs.xfs is installed
-            match fs::metadata("/sbin/mkfs.btrfs") {
-                Ok(_) => {}
-                Err(e) => {
-                    match e.kind() {
-                        ErrorKind::NotFound => {
-                            try!(install_utils());
-                        }
-                        _ => {}
-                    }
-                }
+            let arg_list: Vec<String> = vec!["-m".to_string(),
+                                             metadata_profile.clone().to_string(),
+                                             "-l".to_string(),
+                                             leaf_size.to_string(),
+                                             "-n".to_string(),
+                                             node_size.to_string(),
+                                             device.to_string_lossy().to_string()];
+            // Check if mkfs.btrfs is installed
+            if !Path::new("/sbin/mkfs.btrfs").exists() {
+                log!("Installing btrfs utils");
+                apt_install(vec!["btrfs-tools"])?;
             }
-            return process_output(run_command("mkfs.btrfs", &arg_list, true));
+            return process_output(run_command("mkfs.btrfs", &arg_list));
         }
         &Filesystem::Xfs { ref inode_size, ref force } => {
             let mut arg_list: Vec<String> = Vec::new();
@@ -240,31 +225,62 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
             arg_list.push(device.to_string_lossy().to_string());
 
             // Check if mkfs.xfs is installed
-            match fs::metadata("/sbin/mkfs.xfs") {
-                Ok(_) => {}
-                Err(e) => {
-                    match e.kind() {
-                        ErrorKind::NotFound => {
-                            try!(install_utils());
-                        }
-                        _ => {}
-                    }
-                }
+            if !Path::new("/sbin/mkfs.xfs").exists() {
+                log!("Installing xfs utils");
+                apt_install(vec!["xfsprogs"])?;
             }
-            return process_output(run_command("/sbin/mkfs.xfs", &arg_list, true));
+            return process_output(run_command("/sbin/mkfs.xfs", &arg_list));
+        }
+        &Filesystem::Zfs { ref block_size, ref compression } => {
+            //let mut arg_list: Vec<String>; = Vec::new();
+            // Check if zfs is installed
+            if !Path::new("/sbin/zfs").exists() {
+                log!("Installing zfs utils");
+                apt_install(vec!["zfsutils-linux"])?;
+            }
+            let base_name = device.file_name();
+            match base_name {
+                Some(name) => {
+                    //Mount at /mnt/{dev_name}
+                    let arg_list: Vec<String> = vec!["create".to_string(),
+                                                     "-f".to_string(),
+                                                     "-m".to_string(),
+                                                     format!("/mnt/{}",
+                                                             name.to_string_lossy().into_owned()),
+                                                     name.to_string_lossy().into_owned(),
+                                                     device.to_string_lossy().into_owned()];
+                    process_output(run_command("/sbin/zpool", &arg_list))?;
+
+                    if block_size.is_some() {
+                        process_output(run_command("/sbin/zfs",
+                                                   &vec!["set".to_string(),
+                                                         format!("recordsize={}",
+                                                                 block_size.unwrap()),
+                                                         name.to_string_lossy().into_owned()]))?;
+                    }
+                    if compression.is_some() {
+                        process_output(run_command("/sbin/zfs",
+                                                   &vec!["set".to_string(),
+                                                         "compression=on".to_string(),
+                                                         name.to_string_lossy().into_owned()]))?;
+                    }
+                    process_output(run_command("/sbin/zfs",
+                                               &vec!["set".to_string(),
+                                                     "acltype=posixacl".to_string(),
+                                                     name.to_string_lossy().into_owned()]))?;
+                    Ok(0)
+                }
+                None => Err(format!("Unable to determine filename for device: {:?}", device)),
+            }
         }
         &Filesystem::Ext4 { ref inode_size, ref reserved_blocks_percentage } => {
-            let mut arg_list: Vec<String> = Vec::new();
+            let arg_list: Vec<String> = vec!["-I".to_string(),
+                                             inode_size.to_string(),
+                                             "-m".to_string(),
+                                             reserved_blocks_percentage.to_string(),
+                                             device.to_string_lossy().to_string()];
 
-            arg_list.push("-I".to_string());
-            arg_list.push(inode_size.to_string());
-
-            arg_list.push("-m".to_string());
-            arg_list.push(reserved_blocks_percentage.to_string());
-
-            arg_list.push(device.to_string_lossy().to_string());
-
-            return process_output(run_command("mkfs.ext4", &arg_list, true));
+            return process_output(run_command("mkfs.ext4", &arg_list));
         }
     }
 }
@@ -333,6 +349,7 @@ fn get_media_type(device: &libudev::Device) -> MediaType {
     }
 }
 
+#[allow(dead_code)]
 pub fn is_block_device(device_path: &PathBuf) -> Result<bool, String> {
     let context = try!(libudev::Context::new().map_err(|e| e.to_string()));
     let mut enumerator = try!(libudev::Enumerator::new(&context).map_err(|e| e.to_string()));
