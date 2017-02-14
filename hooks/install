@@ -13,5 +13,5 @@ if is_centos
     apt-get update
 
     juju-log "Installing Gluster"
-    apt-get -y install ctdb nfs-common glusterfs-server glusterfs-common glusterfs-client zfs
+    apt-get -y install ctdb nfs-common glusterfs-server glusterfs-common glusterfs-client
 fi
