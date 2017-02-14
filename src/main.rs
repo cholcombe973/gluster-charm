@@ -923,6 +923,8 @@ fn brick_attached() -> Result<(), String> {
                 block_size: None,
             };
             block::format_block_device(&brick_path, &filesystem_type).map_err(|e| e.to_string())?;
+            // ZFS mounts the filesystem for us
+            return Ok(());
         }
         _ => {
             log!(format!("Formatting block device with XFS: {:?}", &brick_path),
@@ -948,10 +950,7 @@ fn brick_attached() -> Result<(), String> {
         create_dir(&mount_path).map_err(|e| e.to_string())?;
     }
 
-    // ZFS mounts the filesytem for us
-    if filesystem_type != block::FilesystemType::Zfs {
-        block::mount_device(&device_info, &mount_path)?;
-    }
+    block::mount_device(&device_info, &mount_path)?;
     return Ok(());
 }
 
