@@ -136,7 +136,7 @@ The charm supports several filesystems currently.  Btrfs, Ext4, Xfs and ZFS. The
 default filesystem can be set in the config.yaml.  The charm currently defaults
 to XFS but ZFS would likely be a safe choice and enable advanced functionality
 such as bcache backed gluster bricks. 
-Note: The ZFS filesystem requires Ubuntu 16.04 or greater
+**Note: The ZFS filesystem requires Ubuntu 16.04 or greater**
 
 ## Notes:
 If you're using containers to test Gluster you might need to edit /etc/default/lxc-net
