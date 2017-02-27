@@ -131,6 +131,22 @@ inside a gluster remote shell or as standalone commands with 'gf' prepended to
 their respective base names. Example usage is shown here:
 [Docs](https://gluster.readthedocs.io/en/latest/Administrator%20Guide/GlusterFS%20Coreutils/)
 
+## MultiTenancy
+
+Gluster provides a few easy ways to have multiple clients in the same volume
+without them knowing about one another.  
+1. Deep Mounting.  Gluster NFS supports deep mounting which allows the sysadmin
+to create a top level directory for each client.  Then instead of mounting the
+volume you mount the volume + the directory name.  Now the client only sees
+their files.  This doesn't stop a malacious client from remounting the top
+level directory.  
+  * This can be combined with [posix acl's](https://gluster.readthedocs.io/en/latest/Administrator%20Guide/Access%20Control%20Lists/) if your tenants are not trustworthy.
+  * Another option is combining with [Netgroups](https://gluster.readthedocs.io/en/latest/Administrator%20Guide/Export%20And%20Netgroup%20Authentication/).
+  This feature allows users to restrict access specific IPs
+  (exports authentication) or a netgroup (netgroups authentication),
+  or a combination of both for both Gluster volumes and subdirectories within
+  Gluster volumes.
+
 ## Filesystem Support:
 The charm supports several filesystems currently.  Btrfs, Ext4, Xfs and ZFS. The
 default filesystem can be set in the config.yaml.  The charm currently defaults
