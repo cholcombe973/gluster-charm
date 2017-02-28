@@ -4,6 +4,7 @@ mod block;
 mod ctdb;
 mod metrics;
 mod samba;
+mod updatedb;
 mod upgrade;
 
 extern crate debian;
@@ -951,6 +952,11 @@ fn brick_attached() -> Result<(), String> {
     }
 
     block::mount_device(&device_info, &mount_path)?;
+
+    log!(format!("Removing mount path from updatedb {:?}", mount_path),
+         Info);
+    updatedb::add_to_prunepath(&mount_path, &Path::new("/etc/updatedb.conf"))
+        .map_err(|e| e.to_string())?;
     return Ok(());
 }
 
@@ -1075,10 +1081,14 @@ fn mount_cluster(volume_name: &str) -> Result<(), String> {
         cmd.arg("/mnt/glusterfs");
         let output = cmd.output().map_err(|e| e.to_string())?;
         if output.status.success() {
+            log!("Removing /mnt/glusterfs from updatedb", Info);
+            updatedb::add_to_prunepath(&String::from("/mnt/glusterfs"),
+                                   &Path::new("/etc/updatedb.conf")).map_err(|e| e.to_string())?;
             return Ok(());
         } else {
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
+
     }
     return Ok(());
 }
