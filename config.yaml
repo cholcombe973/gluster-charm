@@ -7,9 +7,10 @@ options:
       of the mount point.  Example: mount -t glusterfs server1:/test
   cluster_type:
     type: string
-    default: Replicate
+    default: DistributedAndReplicate
     description: |
-      The type of volume to setup.  Replicate is sufficient for most use cases.
+      The type of volume to setup.  DistributedAndReplicate is sufficient 
+      for most use cases.
       Other options include: Distribute,
         Stripe,
         StripedAndReplicate,
