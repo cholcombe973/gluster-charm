@@ -31,7 +31,8 @@ options:
     description: |
       The filesystem type to use for each one of the bricks.  Can be either
       zfs, xfs, btrfs, or ext4. Note that zfs only works with ubuntu 16.04 or
-      newer
+      newer. General testing has shown that xfs is the most performant
+      filesystem.
   splitbrain_policy:
     type: string
     default: size
@@ -45,7 +46,7 @@ options:
       mtime and size in more than half the number of bricks in the replica.
   source:
     type: string
-    default: ppa:gluster/glusterfs-3.8
+    default: ppa:gluster/glusterfs-3.10
     description: |
       Optional configuration to support use of additional sources such as:
 
@@ -98,4 +99,6 @@ options:
       persistently. By default we set pid_max, max_map_count and
       threads-max to a high value to avoid problems with large numbers (>20)
       of OSDs recovering. very large clusters should set those values even
-      higher (e.g. max for kernel.pid_max is 4194303).
+      higher (e.g. max for kernel.pid_max is 4194303). Example settings for
+      random and small file workloads:
+        '{ vm.dirty_ratio: 5, vm.dirty_background_ratio: 2 }'
