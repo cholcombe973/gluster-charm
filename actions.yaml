@@ -8,7 +8,7 @@ create-volume-quota:
       description: The volume to enable this quota on
     usage-limit:
       type: integer
-      description: The MB limit of the quota for this volume.
+      description: The byte limit of the quota for this volume.
     path:
       type: string
       description: The path to limit the usage on.  Defaults to /
