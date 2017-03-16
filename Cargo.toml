@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 
 [dependencies]
-chrono = { version = "0.2", features = ["rustc-serialize"] }
+chrono = { version = "0.3", features = ["rustc-serialize"] }
 debian = "*"
 gluster = "*"
 init-daemon = "*"
@@ -21,7 +21,7 @@ resolve = "~0.1"
 rustc-serialize = "*"
 serde = "^0.9"
 serde_yaml = "^0.6"
-uuid = { version = "^0.3", features = ["v4"] }
+uuid = { version = "^0.4", features = ["v4"] }
 
 # The development profile, used for `cargo build`
 [profile.dev]

@@ -717,11 +717,20 @@ fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
             settings.push(GlusterOption::NfsDisable(Toggle::Off));
             settings.push(GlusterOption::DiagnosticsLatencyMeasurement(Toggle::On));
             settings.push(GlusterOption::DiagnosticsCountFopHits(Toggle::On));
-            settings.push(GlusterOption::DiagnosticsFopSampleInterval(1));
-            // Dump FOP stats every other second
-            settings.push(GlusterOption::DiagnosticsStatsDumpInterval(2));
+            settings.push(GlusterOption::DiagnosticsFopSampleInterval(5));
+            // Dump FOP stats every 5 seconds.
+            // NOTE: On slow main drives this can severely impact them
+            settings.push(GlusterOption::DiagnosticsStatsDumpInterval(30));
             // 1HR DNS timeout
             settings.push(GlusterOption::DiagnosticsStatsDnscacheTtlSec(3600));
+
+            // Set parallel-readdir on.  This has a very nice performance benefit
+            // as the number of bricks/directories grows
+            settings.push(GlusterOption::PerformanceParallelReadDir(Toggle::On));
+
+            settings.push(GlusterOption::PerformanceReadDirAhead(Toggle::On));
+            // Start with 20MB and go from there
+            settings.push(GlusterOption::PerformanceReadDirAheadCacheLimit(1024 * 1024 * 20));
 
             // Set the split brain policy if requested
             if let Ok(splitbrain_policy) = juju::config_get("splitbrain_policy") {
