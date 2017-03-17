@@ -188,12 +188,67 @@ fn create_sysctl<T: Write>(sysctl: String, f: &mut T) -> Result<usize, String> {
 }
 
 fn config_changed() -> Result<(), String> {
+    // If either of these fail we fail the hook
+    check_for_new_devices()?;
     check_for_upgrade()?;
+
+    // If this fails don't fail the hook
     if let Err(err) = check_for_sysctl() {
         log!(format!("Setting sysctl's failed with error: {}", err),
              Error);
     }
     return Ok(());
+}
+
+fn check_for_new_devices() -> Result<(), String> {
+    log!("Checking for new devices", Info);
+    let config = juju::Config::new().map_err(|e| e.to_string())?;
+    if config.changed("brick_devices").map_err(|e| e.to_string())? {
+        // Get the changed list of brick devices and initialize each one
+        let brick_paths: Vec<PathBuf> = get_config_value("brick_devices")
+            .unwrap_or("".to_string())
+            .split(" ")
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .map(|s| PathBuf::from(s))
+            .collect();
+        // Check for any devices that are mounted and skip those.  They're already taken care of
+        for brick in brick_paths {
+            if block::is_block_device(&brick).is_err() {
+                log!(format!("{:?} is not a block device. Skipping.", brick));
+                continue;
+            }
+            // If ephemeral-unmount is set and the directory is mounted we unmount it.
+            // Otherwise nothing happens
+            ephemeral_unmount()?; // TODO: Should this fail the hook or just skip?
+
+            let brick_filename = match brick.file_name() {
+                Some(name) => name,
+                None => {
+                    log!(format!("Unable to determine filename for device: {:?}. Skipping",
+                                 brick),
+                         Error);
+                    continue;
+                }
+            };
+            let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
+            log!(format!("Checking if {:?} is mounted", mount_path));
+            match is_mounted(&mount_path) {
+                Ok(mounted) => {
+                    if mounted {
+                        log!(format!("{:?} is mounted. Skipping", brick), Error);
+                        continue;
+                    }
+                }
+                Err(_) => {}
+            };
+            log!(format!("Calling initialize_storage for {:?}", brick));
+            initialize_storage(&brick)?;
+        }
+    } else {
+        log!("No new devices found");
+    }
+    Ok(())
 }
 
 fn check_for_sysctl() -> Result<(), String> {
@@ -414,6 +469,29 @@ fn brick_and_server_cartesian_product(peers: &Vec<gluster::Peer>,
     return product;
 }
 
+fn ephemeral_unmount() -> Result<(), String> {
+    match get_config_value("ephemeral_unmount") {
+        Ok(mountpoint) => {
+            if is_mounted(&mountpoint)? {
+                let mut cmd = std::process::Command::new("umount");
+                cmd.arg(mountpoint);
+                let output = cmd.output().map_err(|e| e.to_string())?;
+                if !output.status.success() {
+                    return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+                }
+                // Unmounted Ok
+                return Ok(());
+            }
+            // Not mounted
+            Ok(())
+        }
+        _ => {
+            // No-op
+            Ok(())
+        }
+    }
+}
+
 // This function will take into account the replication level and
 // try its hardest to produce a list of bricks that satisfy this:
 // 1. Are not already in the volume
@@ -428,18 +506,67 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
     // Default to 3 replicas if the parsing fails
     let replica_config = get_config_value("replication_level").unwrap_or("3".to_string());
     let replicas = replica_config.parse().unwrap_or(3);
+    let config_brick_devices: Vec<String> = get_config_value("brick_devices")
+        .unwrap_or("".to_string())
+        .split(" ")
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    log!(format!("user config storage_list: {:?}", config_brick_devices));
     let mut brick_paths: Vec<String> = Vec::new();
 
-    let bricks = juju::storage_list().unwrap();
-    log!(format!("storage_list: {:?}", bricks));
+    let juju_storage_bricks = juju::storage_list().unwrap();
+    log!(format!("juju storage_list: {:?}", juju_storage_bricks));
 
-    for brick in bricks.lines() {
+    // Add any devices that were set with juju storage
+    for brick in juju_storage_bricks.lines() {
         // This is the /dev/ location.
         let storage_location = juju::storage_get(brick.trim()).unwrap();
         // Translate to mount location
         let brick_path = PathBuf::from(storage_location.trim());
-        let mount_path = format!("/mnt/{}", brick_path.file_name().unwrap().to_string_lossy());
+        let brick_filename = match brick_path.file_name() {
+            Some(name) => name,
+            None => {
+                log!(format!("Unable to determine filename for device: {:?}. Skipping",
+                             brick),
+                     Error);
+                continue;
+            }
+        };
+        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
 
+        brick_paths.push(mount_path);
+    }
+
+    // Add any devices that were set with the config.yaml
+    for brick in config_brick_devices {
+        let brick_path = PathBuf::from(brick);
+
+        if block::is_block_device(&brick_path).is_err() {
+            log!(format!("{:?} is not a block device. Skipping.", brick_path));
+            continue;
+        }
+        // If ephemeral-unmount is set and the directory is mounted we unmount it.
+        // Otherwise nothing happens
+        // TODO: Should this fail the hook or just skip?
+        ephemeral_unmount().map_err(|e| Status::InvalidConfig(e))?;
+
+        // Translate to mount location
+        let brick_filename = match brick_path.file_name() {
+            Some(name) => name,
+            None => {
+                log!(format!("Unable to determine filename for device: {:?}. Skipping",
+                             brick_path),
+                     Error);
+                continue;
+            }
+        };
+        log!(format!("Calling initialize_storage for {:?}", brick_path));
+        // This needs to be called for the user config devices but not for juju storage devices
+        // Juju storage has a separate hook that fires to ensure the devices are already setup
+        initialize_storage(&brick_path).map_err(|e| Status::InvalidConfig(e))?;
+
+        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
         brick_paths.push(mount_path);
     }
 
@@ -877,84 +1004,85 @@ fn server_removed() -> Result<(), String> {
     return Ok(());
 }
 
-fn brick_attached() -> Result<(), String> {
+// Format and mount block devices to ready them for consumption by Gluster
+fn initialize_storage(device_path: &PathBuf) -> Result<(), String> {
     let filesystem_config_value = get_config_value("filesystem_type")?;
     let filesystem_type = block::FilesystemType::from_str(&filesystem_config_value);
-    // Format our bricks and mount them
-    let brick_location = juju::storage_get_location().map_err(|e| e.to_string())?;
-    let brick_path = PathBuf::from(brick_location.trim());
-    let mount_path = format!("/mnt/{}", brick_path.file_name().unwrap().to_string_lossy());
+    let mount_path = format!("/mnt/{}",
+                             device_path.file_name().unwrap().to_string_lossy());
 
     // Format with the default XFS unless told otherwise
     match filesystem_type {
         block::FilesystemType::Xfs => {
-            log!(format!("Formatting block device with XFS: {:?}", &brick_path),
+            log!(format!("Formatting block device with XFS: {:?}", &device_path),
                  Info);
-            status_set!(Maintenance format!("Formatting block device with XFS: {:?}", &brick_path));
+            status_set!(Maintenance
+                format!("Formatting block device with XFS: {:?}", &device_path));
 
             let filesystem_type = block::Filesystem::Xfs {
                 inode_size: None,
                 force: true,
             };
-            block::format_block_device(&brick_path, &filesystem_type)?;
+            block::format_block_device(device_path, &filesystem_type)?;
         }
         block::FilesystemType::Ext4 => {
-            log!(format!("Formatting block device with Ext4: {:?}", &brick_path),
+            log!(format!("Formatting block device with Ext4: {:?}", &device_path),
                  Info);
             status_set!(Maintenance
-                format!("Formatting block device with Ext4: {:?}", &brick_path));
+                format!("Formatting block device with Ext4: {:?}", &device_path));
 
             let filesystem_type = block::Filesystem::Ext4 {
                 inode_size: 0,
                 reserved_blocks_percentage: 0,
             };
-            block::format_block_device(&brick_path, &filesystem_type).map_err(|e| e.to_string())?;
+            block::format_block_device(device_path, &filesystem_type).map_err(|e| e.to_string())?;
         }
         block::FilesystemType::Btrfs => {
-            log!(format!("Formatting block device with Btrfs: {:?}", &brick_path),
+            log!(format!("Formatting block device with Btrfs: {:?}", &device_path),
                  Info);
             status_set!(Maintenance
-                format!("Formatting block device with Btrfs: {:?}", &brick_path));
+                format!("Formatting block device with Btrfs: {:?}", &device_path));
 
             let filesystem_type = block::Filesystem::Btrfs {
                 leaf_size: 0,
                 node_size: 0,
                 metadata_profile: block::MetadataProfile::Single,
             };
-            block::format_block_device(&brick_path, &filesystem_type).map_err(|e| e.to_string())?;
+            block::format_block_device(device_path, &filesystem_type).map_err(|e| e.to_string())?;
         }
         block::FilesystemType::Zfs => {
-            log!(format!("Formatting block device with ZFS: {:?}", &brick_path),
+            log!(format!("Formatting block device with ZFS: {:?}", &device_path),
                  Info);
             status_set!(Maintenance
-                format!("Formatting block device with ZFS: {:?}", &brick_path));
+                format!("Formatting block device with ZFS: {:?}", &device_path));
             let filesystem_type = block::Filesystem::Zfs {
                 compression: None,
                 block_size: None,
             };
-            block::format_block_device(&brick_path, &filesystem_type).map_err(|e| e.to_string())?;
+            block::format_block_device(device_path, &filesystem_type).map_err(|e| e.to_string())?;
             // ZFS mounts the filesystem for us
             return Ok(());
         }
         _ => {
-            log!(format!("Formatting block device with XFS: {:?}", &brick_path),
+            log!(format!("Formatting block device with XFS: {:?}", &device_path),
                  Info);
-            status_set!(Maintenance format!("Formatting block device with XFS: {:?}", &brick_path));
+            status_set!(Maintenance
+                format!("Formatting block device with XFS: {:?}", &device_path));
 
             let filesystem_type = block::Filesystem::Xfs {
                 inode_size: None,
                 force: true,
             };
-            block::format_block_device(&brick_path, &filesystem_type).map_err(|e| e.to_string())?;
+            block::format_block_device(&device_path, &filesystem_type).map_err(|e| e.to_string())?;
         }
     }
     // Update our block device info to reflect formatting
-    let device_info = block::get_device_info(&brick_path)?;
+    let device_info = block::get_device_info(&device_path)?;
     log!(format!("device_info: {:?}", device_info), Info);
 
-    log!(format!("Mounting block device {:?} at {}", &brick_path, mount_path),
+    log!(format!("Mounting block device {:?} at {}", &device_path, mount_path),
          Info);
-    status_set!(Maintenance format!("Mounting block device {:?} at {}", &brick_path, mount_path));
+    status_set!(Maintenance format!("Mounting block device {:?} at {}", &device_path, mount_path));
 
     if !Path::new(&mount_path).exists() {
         create_dir(&mount_path).map_err(|e| e.to_string())?;
@@ -967,6 +1095,15 @@ fn brick_attached() -> Result<(), String> {
     updatedb::add_to_prunepath(&mount_path, &Path::new("/etc/updatedb.conf"))
         .map_err(|e| e.to_string())?;
     return Ok(());
+}
+
+fn brick_attached() -> Result<(), String> {
+    let brick_location = juju::storage_get_location().map_err(|e| e.to_string())?;
+    let brick_path = PathBuf::from(brick_location.trim());
+
+    // Format our bricks and mount them
+    initialize_storage(&brick_path)?;
+    Ok(())
 }
 
 fn brick_detached() -> Result<(), String> {

@@ -24,4 +24,4 @@ storage:
   brick:
     type: block
     multiple:
-      range: 1-
+      range: 0-
