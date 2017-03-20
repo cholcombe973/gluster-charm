@@ -12,7 +12,8 @@ use std::path::Path;
 use std::thread;
 
 use self::chrono::*;
-use self::gluster::{volume_info, Peer};
+use self::gluster::peer::Peer;
+use self::gluster::volume::volume_info;
 use self::rand::distributions::{IndependentSample, Range};
 use self::rustc_serialize::json;
 use self::uuid::Uuid;

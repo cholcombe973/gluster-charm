@@ -34,6 +34,8 @@ use std::time::Duration;
 
 use debian::version::Version;
 use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
+use gluster::peer::{peer_list, peer_probe, peer_status, Peer, State};
+use gluster::volume::*;
 use ipnetwork::IpNetwork;
 use itertools::Itertools;
 use resolve::address::address_name;
@@ -42,26 +44,25 @@ use samba::setup_samba;
 
 #[cfg(test)]
 mod tests {
-    // extern crate uuid;
     use std::collections::BTreeMap;
-    use std::fs::File;
-    use std::io::prelude::Read;
     use std::path::PathBuf;
-    use super::gluster;
-    use super::uuid;
+
+    use super::gluster::volume::{Brick, Transport, Volume, VolumeType};
+    use super::gluster::peer::{Peer, State};
+    use super::uuid::Uuid;
 
     #[test]
     fn test_all_peers_are_ready() {
-        let peers: Vec<gluster::Peer> = vec![gluster::Peer {
-                                                 uuid: uuid::Uuid::new_v4(),
-                                                 hostname: format!("host-{}", uuid::Uuid::new_v4()),
-                                                 status: gluster::State::PeerInCluster,
-                                             },
-                                             gluster::Peer {
-                                                 uuid: uuid::Uuid::new_v4(),
-                                                 hostname: format!("host-{}", uuid::Uuid::new_v4()),
-                                                 status: gluster::State::PeerInCluster,
-                                             }];
+        let peers: Vec<Peer> = vec![Peer {
+                                        uuid: Uuid::new_v4(),
+                                        hostname: format!("host-{}", Uuid::new_v4()),
+                                        status: State::PeerInCluster,
+                                    },
+                                    Peer {
+                                        uuid: Uuid::new_v4(),
+                                        hostname: format!("host-{}", Uuid::new_v4()),
+                                        status: State::PeerInCluster,
+                                    }];
         let ready = super::peers_are_ready(Ok(peers));
         println!("Peers are ready: {}", ready);
         assert!(ready);
@@ -69,16 +70,16 @@ mod tests {
 
     #[test]
     fn test_some_peers_are_ready() {
-        let peers: Vec<gluster::Peer> = vec![gluster::Peer {
-                                                 uuid: uuid::Uuid::new_v4(),
-                                                 hostname: format!("host-{}", uuid::Uuid::new_v4()),
-                                                 status: gluster::State::Connected,
-                                             },
-                                             gluster::Peer {
-                                                 uuid: uuid::Uuid::new_v4(),
-                                                 hostname: format!("host-{}", uuid::Uuid::new_v4()),
-                                                 status: gluster::State::PeerInCluster,
-                                             }];
+        let peers: Vec<Peer> = vec![Peer {
+                                        uuid: Uuid::new_v4(),
+                                        hostname: format!("host-{}", Uuid::new_v4()),
+                                        status: State::Connected,
+                                    },
+                                    Peer {
+                                        uuid: Uuid::new_v4(),
+                                        hostname: format!("host-{}", Uuid::new_v4()),
+                                        status: State::PeerInCluster,
+                                    }];
         let ready = super::peers_are_ready(Ok(peers));
         println!("Some peers are ready: {}", ready);
         assert_eq!(ready, false);
@@ -86,31 +87,31 @@ mod tests {
 
     #[test]
     fn test_find_new_peers() {
-        let peer1 = gluster::Peer {
-            uuid: uuid::Uuid::new_v4(),
-            hostname: format!("host-{}", uuid::Uuid::new_v4()),
-            status: gluster::State::PeerInCluster,
+        let peer1 = Peer {
+            uuid: Uuid::new_v4(),
+            hostname: format!("host-{}", Uuid::new_v4()),
+            status: State::PeerInCluster,
         };
-        let peer2 = gluster::Peer {
-            uuid: uuid::Uuid::new_v4(),
-            hostname: format!("host-{}", uuid::Uuid::new_v4()),
-            status: gluster::State::PeerInCluster,
+        let peer2 = Peer {
+            uuid: Uuid::new_v4(),
+            hostname: format!("host-{}", Uuid::new_v4()),
+            status: State::PeerInCluster,
         };
 
         // peer1 and peer2 are in the cluster but only peer1 is actually serving a brick.
         // find_new_peers should return peer2 as a new peer
-        let peers: Vec<gluster::Peer> = vec![peer1.clone(), peer2.clone()];
-        let existing_brick = gluster::Brick {
+        let peers: Vec<Peer> = vec![peer1.clone(), peer2.clone()];
+        let existing_brick = Brick {
             peer: peer1,
             path: PathBuf::from("/mnt/brick1"),
         };
 
-        let volume_info = gluster::Volume {
+        let volume_info = Volume {
             name: "Test".to_string(),
-            vol_type: gluster::VolumeType::Replicate,
-            id: uuid::Uuid::new_v4(),
+            vol_type: VolumeType::Replicate,
+            id: Uuid::new_v4(),
             status: "online".to_string(),
-            transport: gluster::Transport::Tcp,
+            transport: Transport::Tcp,
             bricks: vec![existing_brick],
             options: BTreeMap::new(),
         };
@@ -120,34 +121,34 @@ mod tests {
 
     #[test]
     fn test_cartesian_product() {
-        let peer1 = gluster::Peer {
-            uuid: uuid::Uuid::new_v4(),
-            hostname: format!("host-{}", uuid::Uuid::new_v4()),
-            status: gluster::State::PeerInCluster,
+        let peer1 = Peer {
+            uuid: Uuid::new_v4(),
+            hostname: format!("host-{}", Uuid::new_v4()),
+            status: State::PeerInCluster,
         };
-        let peer2 = gluster::Peer {
-            uuid: uuid::Uuid::new_v4(),
-            hostname: format!("host-{}", uuid::Uuid::new_v4()),
-            status: gluster::State::PeerInCluster,
+        let peer2 = Peer {
+            uuid: Uuid::new_v4(),
+            hostname: format!("host-{}", Uuid::new_v4()),
+            status: State::PeerInCluster,
         };
         let peers = vec![peer1.clone(), peer2.clone()];
         let paths = vec!["/mnt/brick1".to_string(), "/mnt/brick2".to_string()];
         let result = super::brick_and_server_cartesian_product(&peers, &paths);
         println!("brick_and_server_cartesian_product: {:?}", result);
         assert_eq!(result,
-                   vec![gluster::Brick {
+                   vec![Brick {
                             peer: peer1.clone(),
                             path: PathBuf::from("/mnt/brick1"),
                         },
-                        gluster::Brick {
+                        Brick {
                             peer: peer2.clone(),
                             path: PathBuf::from("/mnt/brick1"),
                         },
-                        gluster::Brick {
+                        Brick {
                             peer: peer1.clone(),
                             path: PathBuf::from("/mnt/brick2"),
                         },
-                        gluster::Brick {
+                        Brick {
                             peer: peer2.clone(),
                             path: PathBuf::from("/mnt/brick2"),
                         }]);
@@ -233,15 +234,17 @@ fn check_for_new_devices() -> Result<(), String> {
             };
             let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
             log!(format!("Checking if {:?} is mounted", mount_path));
-            match is_mounted(&mount_path) {
-                Ok(mounted) => {
-                    if mounted {
-                        log!(format!("{:?} is mounted. Skipping", brick), Error);
-                        continue;
+            if Path::new(&mount_path).exists() {
+                match is_mounted(&mount_path) {
+                    Ok(mounted) => {
+                        if mounted {
+                            log!(format!("{:?} is mounted. Skipping", brick), Error);
+                            continue;
+                        }
                     }
-                }
-                Err(_) => {}
-            };
+                    Err(_) => {}
+                };
+            }
             log!(format!("Calling initialize_storage for {:?}", brick));
             initialize_storage(&brick)?;
         }
@@ -338,7 +341,7 @@ fn setup_ctdb() -> Result<(), String> {
         return Ok(());
     }
     log!("setting up ctdb");
-    let peers = gluster::peer_list().map_err(|e| e.to_string())?;
+    let peers = peer_list().map_err(|e| e.to_string())?;
     log!(format!("Got ctdb peer list: {:?}", peers));
     let mut cluster_addresses: Vec<IpAddr> = Vec::new();
     for peer in peers {
@@ -371,12 +374,12 @@ fn setup_ctdb() -> Result<(), String> {
     Ok(())
 }
 
-fn peers_are_ready(peers: Result<Vec<gluster::Peer>, gluster::GlusterError>) -> bool {
+fn peers_are_ready(peers: Result<Vec<Peer>, gluster::GlusterError>) -> bool {
     match peers {
         Ok(peer_list) => {
             // Ensure all peers are in a PeerInCluster state
             log!(format!("Got peer status: {:?}", peer_list));
-            return peer_list.iter().all(|peer| peer.status == gluster::State::PeerInCluster);
+            return peer_list.iter().all(|peer| peer.status == State::PeerInCluster);
         }
         Err(err) => {
             log!(format!("peers_are_ready failed to get peer status: {:?}", err),
@@ -392,7 +395,7 @@ fn wait_for_peers() -> Result<(), String> {
     log!("Waiting for all peers to enter the Peer in Cluster status");
     status_set!(Maintenance "Waiting for all peers to enter the \"Peer in Cluster status\"");
     let mut iterations = 0;
-    while !peers_are_ready(gluster::peer_status()) {
+    while !peers_are_ready(peer_status()) {
         thread::sleep(Duration::from_secs(1));
         iterations += 1;
         if iterations > 600 {
@@ -413,7 +416,7 @@ fn wait_for_peers() -> Result<(), String> {
 // 3. To get around this I'm converting hostnames to ip addresses in the gluster library to mask
 // this from the callers.
 //
-fn probe_in_units(existing_peers: &Vec<gluster::Peer>,
+fn probe_in_units(existing_peers: &Vec<Peer>,
                   related_units: Vec<juju::Relation>)
                   -> Result<(), String> {
 
@@ -427,7 +430,7 @@ fn probe_in_units(existing_peers: &Vec<gluster::Peer>,
         // Probe the peer in
         if !already_probed {
             log!(format!("Adding {} to cluster", &address_trimmed));
-            match gluster::peer_probe(&address_trimmed) {
+            match peer_probe(&address_trimmed) {
                 Ok(_) => {
                     log!("Gluster peer probe was successful");
                 }
@@ -441,8 +444,8 @@ fn probe_in_units(existing_peers: &Vec<gluster::Peer>,
     return Ok(());
 }
 
-fn find_new_peers(peers: &Vec<gluster::Peer>, volume_info: &gluster::Volume) -> Vec<gluster::Peer> {
-    let mut new_peers: Vec<gluster::Peer> = Vec::new();
+fn find_new_peers(peers: &Vec<Peer>, volume_info: &Volume) -> Vec<Peer> {
+    let mut new_peers: Vec<Peer> = Vec::new();
     for peer in peers {
         // If this peer is already in the volume, skip it
         let existing_peer = volume_info.bricks.iter().any(|brick| brick.peer.uuid == peer.uuid);
@@ -453,14 +456,14 @@ fn find_new_peers(peers: &Vec<gluster::Peer>, volume_info: &gluster::Volume) -> 
     return new_peers;
 }
 
-fn brick_and_server_cartesian_product(peers: &Vec<gluster::Peer>,
+fn brick_and_server_cartesian_product(peers: &Vec<Peer>,
                                       paths: &Vec<String>)
-                                      -> Vec<gluster::Brick> {
-    let mut product: Vec<gluster::Brick> = Vec::new();
+                                      -> Vec<gluster::volume::Brick> {
+    let mut product: Vec<gluster::volume::Brick> = Vec::new();
 
     let it = paths.iter().cartesian_product(peers.iter());
     for (path, host) in it {
-        let brick = gluster::Brick {
+        let brick = gluster::volume::Brick {
             peer: host.clone(),
             path: PathBuf::from(path),
         };
@@ -499,9 +502,9 @@ fn ephemeral_unmount() -> Result<(), String> {
 // 3. Stripped across the hosts
 // If insufficient hosts exist to satisfy this replication level this will return no new bricks
 // to add
-fn get_brick_list(peers: &Vec<gluster::Peer>,
-                  volume: Option<gluster::Volume>)
-                  -> Result<Vec<gluster::Brick>, Status> {
+fn get_brick_list(peers: &Vec<Peer>,
+                  volume: Option<Volume>)
+                  -> Result<Vec<gluster::volume::Brick>, Status> {
 
     // Default to 3 replicas if the parsing fails
     let replica_config = get_config_value("replication_level").unwrap_or("3".to_string());
@@ -615,11 +618,9 @@ fn get_brick_list(peers: &Vec<gluster::Peer>,
 }
 
 // Create a new volume if enough peers are available
-fn create_volume(peers: &Vec<gluster::Peer>,
-                 volume_info: Option<gluster::Volume>)
-                 -> Result<Status, String> {
+fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Status, String> {
     let cluster_type_config = get_config_value("cluster_type")?;
-    let cluster_type = gluster::VolumeType::from_str(&cluster_type_config);
+    let cluster_type = VolumeType::from_str(&cluster_type_config);
     let volume_name = get_config_value("volume_name")?;
     let replicas = match get_config_value("replication_level")?.parse() {
         Ok(r) => r,
@@ -667,87 +668,64 @@ fn create_volume(peers: &Vec<gluster::Peer>,
          Info);
 
     match cluster_type {
-        gluster::VolumeType::Distribute => {
-            let _ = gluster::volume_create_distributed(&volume_name,
-                                                       gluster::Transport::Tcp,
-                                                       brick_list,
-                                                       true)
+        VolumeType::Distribute => {
+            let _ = volume_create_distributed(&volume_name, Transport::Tcp, brick_list, true)
                 .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
-        gluster::VolumeType::Stripe => {
-            let _ = gluster::volume_create_striped(&volume_name,
-                                                   3,
-                                                   gluster::Transport::Tcp,
-                                                   brick_list,
-                                                   true)
+        VolumeType::Stripe => {
+            let _ = volume_create_striped(&volume_name, 3, Transport::Tcp, brick_list, true)
                 .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
-        gluster::VolumeType::Replicate => {
-            let _ = gluster::volume_create_replicated(&volume_name,
-                                                      replicas,
-                                                      gluster::Transport::Tcp,
-                                                      brick_list,
-                                                      true)
+        VolumeType::Replicate => {
+            let _ =
+                volume_create_replicated(&volume_name, replicas, Transport::Tcp, brick_list, true)
+                    .map_err(|e| e.to_string());
+            Ok(Status::Created)
+        }
+        VolumeType::StripedAndReplicate => {
+            let _ = volume_create_striped_replicated(&volume_name,
+                                                     3,
+                                                     3,
+                                                     Transport::Tcp,
+                                                     brick_list,
+                                                     true)
                 .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
-        gluster::VolumeType::StripedAndReplicate => {
-            let _ = gluster::volume_create_striped_replicated(&volume_name,
-                                                              3,
-                                                              3,
-                                                              gluster::Transport::Tcp,
-                                                              brick_list,
-                                                              true)
+        VolumeType::Disperse => {
+            let _ = volume_create_erasure(&volume_name, 3, 1, Transport::Tcp, brick_list, true)
                 .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
-        gluster::VolumeType::Disperse => {
-            let _ = gluster::volume_create_erasure(&volume_name,
-                                                   3,
-                                                   1,
-                                                   gluster::Transport::Tcp,
-                                                   brick_list,
-                                                   true)
+        // VolumeType::Tier => {},
+        VolumeType::DistributedAndStripe => {
+            let _ = volume_create_striped(&volume_name, 3, Transport::Tcp, brick_list, true)
                 .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
-        // gluster::VolumeType::Tier => {},
-        gluster::VolumeType::DistributedAndStripe => {
-            let _ = gluster::volume_create_striped(&volume_name,
-                                                   3,
-                                                   gluster::Transport::Tcp,
-                                                   brick_list,
-                                                   true)
+        VolumeType::DistributedAndReplicate => {
+            let _ = volume_create_replicated(&volume_name, 3, Transport::Tcp, brick_list, true)
                 .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
-        gluster::VolumeType::DistributedAndReplicate => {
-            let _ = gluster::volume_create_replicated(&volume_name,
-                                                      3,
-                                                      gluster::Transport::Tcp,
-                                                      brick_list,
-                                                      true)
+        VolumeType::DistributedAndStripedAndReplicate => {
+            let _ = volume_create_striped_replicated(&volume_name,
+                                                     3,
+                                                     3,
+                                                     Transport::Tcp,
+                                                     brick_list,
+                                                     true)
                 .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
-        gluster::VolumeType::DistributedAndStripedAndReplicate => {
-            let _ = gluster::volume_create_striped_replicated(&volume_name,
-                                                              3,
-                                                              3,
-                                                              gluster::Transport::Tcp,
-                                                              brick_list,
-                                                              true)
-                .map_err(|e| e.to_string());
-            Ok(Status::Created)
-        }
-        gluster::VolumeType::DistributedAndDisperse => {
-            let _ = gluster::volume_create_erasure(
+        VolumeType::DistributedAndDisperse => {
+            let _ = volume_create_erasure(
                 &volume_name,
                 brick_list.len()-1, //TODO: This number has to be lower than the brick length
                 1,
-                gluster::Transport::Tcp,
+                Transport::Tcp,
                 brick_list,
                 true).map_err(|e| e.to_string());
             Ok(Status::Created)
@@ -757,9 +735,7 @@ fn create_volume(peers: &Vec<gluster::Peer>,
 
 // Expands the volume by X servers+bricks
 // Adds bricks and then runs a rebalance
-fn expand_volume(peers: Vec<gluster::Peer>,
-                 volume_info: Option<gluster::Volume>)
-                 -> Result<i32, String> {
+fn expand_volume(peers: Vec<Peer>, volume_info: Option<Volume>) -> Result<i32, String> {
     let volume_name = get_config_value("volume_name")?;
 
     // Are there new peers?
@@ -791,18 +767,18 @@ fn expand_volume(peers: Vec<gluster::Peer>,
 
     log!(format!("Expanding volume with brick list: {:?}", brick_list),
          Info);
-    match gluster::volume_add_brick(&volume_name, brick_list, true) {
+    match volume_add_brick(&volume_name, brick_list, true) {
         Ok(o) => Ok(o),
         Err(e) => Err(e.to_string()),
     }
 }
 
-fn shrink_volume(peer: gluster::Peer, volume_info: Option<gluster::Volume>) -> Result<i32, String> {
+fn shrink_volume(peer: Peer, volume_info: Option<Volume>) -> Result<i32, String> {
     let volume_name = get_config_value("volume_name")?;
 
     log!(format!("Shrinking volume named  {}", volume_name), Info);
 
-    let peers: Vec<gluster::Peer> = vec![peer];
+    let peers: Vec<Peer> = vec![peer];
 
     // Build the brick list
     let brick_list = match get_brick_list(&peers, volume_info) {
@@ -826,14 +802,14 @@ fn shrink_volume(peer: gluster::Peer, volume_info: Option<gluster::Volume>) -> R
 
     log!(format!("Shrinking volume with brick list: {:?}", brick_list),
          Info);
-    match gluster::volume_remove_brick(&volume_name, brick_list, true) {
+    match gluster::volume::volume_remove_brick(&volume_name, brick_list, true) {
         Ok(o) => Ok(o),
         Err(e) => Err(e.to_string()),
     }
 }
 
 fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
-    match gluster::volume_start(&volume_name, false) {
+    match gluster::volume::volume_start(&volume_name, false) {
         Ok(_) => {
             log!("Starting volume succeeded.".to_string(), Info);
             status_set!(Active "Starting volume succeeded.");
@@ -873,7 +849,7 @@ fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
                     }
                 };
             }
-            let _ = gluster::volume_set_options(&volume_name, settings).map_err(|e| e.to_string())?;
+            let _ = volume_set_options(&volume_name, settings).map_err(|e| e.to_string())?;
 
             return Ok(());
         }
@@ -885,7 +861,7 @@ fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
     };
 }
 
-fn create_gluster_volume(volume_name: &str, peers: Vec<gluster::Peer>) -> Result<(), String> {
+fn create_gluster_volume(volume_name: &str, peers: Vec<Peer>) -> Result<(), String> {
     match create_volume(&peers, None) {
         Ok(status) => {
             match status {
@@ -933,15 +909,15 @@ fn server_changed() -> Result<(), String> {
 
         status_set!(Maintenance "Checking for new peers to probe");
 
-        let mut peers = gluster::peer_list().map_err(|e| e.to_string())?;
+        let mut peers = peer_list().map_err(|e| e.to_string())?;
         log!(format!("peer list: {:?}", peers));
         let related_units = juju::relation_list().map_err(|e| e.to_string())?;
         probe_in_units(&peers, related_units)?;
         // Update our peer list
-        peers = gluster::peer_list().map_err(|e| e.to_string())?;
+        peers = peer_list().map_err(|e| e.to_string())?;
 
         // Everyone is in.  Lets see if a volume exists
-        let volume_info = gluster::volume_info(&volume_name);
+        let volume_info = volume_info(&volume_name);
         let existing_volume: bool;
         match volume_info {
             Ok(_) => {
@@ -1114,7 +1090,7 @@ fn brick_detached() -> Result<(), String> {
 fn fuse_relation_joined() -> Result<(), String> {
     // Fuse clients only need one ip address and they can discover the rest
     let public_addr = try!(juju::unit_get_public_addr().map_err(|e| e.to_string())).to_string();
-    let volumes = gluster::volume_list();
+    let volumes = volume_list();
     juju::relation_set("gluster-public-address", &public_addr).map_err(|e| e.to_string())?;
     if let Some(vols) = volumes {
         juju::relation_set("volumes", &vols.join(" ")).map_err(|e| e.to_string())?;
@@ -1147,7 +1123,7 @@ fn resolve_first_vip_to_dns() -> Result<String, String> {
 
 fn nfs_relation_joined() -> Result<(), String> {;
     let config_value = juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?;
-    let volumes = gluster::volume_list();
+    let volumes = volume_list();
     if let Some(vols) = volumes {
         juju::relation_set("volumes", &vols.join(" ")).map_err(|e| e.to_string())?;
     }
