@@ -245,8 +245,10 @@ fn check_for_new_devices() -> Result<(), String> {
                     Err(_) => {}
                 };
             }
-            log!(format!("Calling initialize_storage for {:?}", brick));
-            initialize_storage(&brick)?;
+            if !device_initialized(&brick) {
+                log!(format!("Calling initialize_storage for {:?}", brick));
+                initialize_storage(&brick)?;
+            }
         }
     } else {
         log!("No new devices found");
@@ -564,10 +566,12 @@ fn get_brick_list(peers: &Vec<Peer>,
                 continue;
             }
         };
-        log!(format!("Calling initialize_storage for {:?}", brick_path));
         // This needs to be called for the user config devices but not for juju storage devices
         // Juju storage has a separate hook that fires to ensure the devices are already setup
-        initialize_storage(&brick_path).map_err(|e| Status::InvalidConfig(e))?;
+        if !device_initialized(&brick_path) {
+            log!(format!("Calling initialize_storage for {:?}", brick_path));
+            initialize_storage(&brick_path)?;
+        }
 
         let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
         brick_paths.push(mount_path);
@@ -978,6 +982,17 @@ fn server_removed() -> Result<(), String> {
     let private_address = juju::unit_get_private_addr().map_err(|e| e.to_string())?;
     log!(format!("Removing server: {}", private_address), Info);
     return Ok(());
+}
+
+// Given a dev device path /dev/xvdb this will check to see if the device
+// has been formatted and mounted
+fn device_initialized(brick_path: &PathBuf) -> Result<bool, String> {
+    let mut file = File::open("/proc/mounts").map_err(|e| e.to_string())?;
+
+    let mut mounts = String::new();
+    file.read_to_string(&mut mount).map_err(|e| e.to_string())?;
+
+    //mounts.lines().map(|mount| mount.split(" "))
 }
 
 // Format and mount block devices to ready them for consumption by Gluster
