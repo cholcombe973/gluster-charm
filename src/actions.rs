@@ -1,4 +1,6 @@
 use gluster;
+use gluster::volume::{quota_list, volume_add_quota, volume_enable_quotas, volume_quotas_enabled,
+                      volume_remove_quota, volume_set_options};
 use juju;
 
 use std::path::PathBuf;
@@ -33,13 +35,12 @@ pub fn enable_volume_quota() -> Result<(), String> {
     };
 
     // Turn quotas on if not already enabled
-    let quotas_enabled = gluster::volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
+    let quotas_enabled = volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
     if !quotas_enabled {
-        gluster::volume_enable_quotas(&volume).map_err(|e| e.to_string())?;
+        volume_enable_quotas(&volume).map_err(|e| e.to_string())?;
     }
 
-    gluster::volume_add_quota(&volume, PathBuf::from(path), parsed_usage_limit)
-        .map_err(|e| e.to_string())?;
+    volume_add_quota(&volume, PathBuf::from(path), parsed_usage_limit).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -62,9 +63,9 @@ pub fn disable_volume_quota() -> Result<(), String> {
         }
     };
 
-    let quotas_enabled = gluster::volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
+    let quotas_enabled = volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
     if quotas_enabled {
-        match gluster::volume_remove_quota(&volume, PathBuf::from(path)) {
+        match volume_remove_quota(&volume, PathBuf::from(path)) {
             Ok(_) => return Ok(()),
             Err(e) => {
                 // Notify the user of the failure and then return the error up the stack
@@ -88,9 +89,9 @@ pub fn list_volume_quotas() -> Result<(), String> {
             return Err(e.to_string());
         }
     };
-    let quotas_enabled = gluster::volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
+    let quotas_enabled = volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
     if quotas_enabled {
-        match gluster::quota_list(&volume) {
+        match quota_list(&volume) {
             Ok(quotas) => {
                 let quota_string: Vec<String> = quotas.iter()
                     .map(|quota| {
@@ -130,6 +131,6 @@ pub fn set_volume_options() -> Result<(), String> {
             volume = value;
         }
     }
-    gluster::volume_set_options(&volume, settings).map_err(|e| e.to_string())?;
+    volume_set_options(&volume, settings).map_err(|e| e.to_string())?;
     return Ok(());
 }

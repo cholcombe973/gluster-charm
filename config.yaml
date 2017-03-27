@@ -5,11 +5,31 @@ options:
     description: |
       The name of the Gluster volume to create.  This will also serve as the name
       of the mount point.  Example: mount -t glusterfs server1:/test
+  brick_devices:
+    type: string
+    default:
+    description: |
+      The devices to format and set up as brick volumes.
+
+      These devices are the range of devices that will be checked for and
+      used across all service units, in addition to any volumes attached
+      via the --storage flag during deployment.
+  ephemeral_unmount:
+    type: string
+    default:
+    description: |
+      Cloud instances provide ephermeral storage which is normally mounted
+      on /mnt.
+
+      Setting this option to the path of the ephemeral mountpoint will force
+      an unmount of the corresponding device so that it can be used as a brick
+      storage device.  This is useful for testing purposes (cloud deployment
+      is not a typical use case).
   cluster_type:
     type: string
     default: DistributedAndReplicate
     description: |
-      The type of volume to setup.  DistributedAndReplicate is sufficient 
+      The type of volume to setup.  DistributedAndReplicate is sufficient
       for most use cases.
       Other options include: Distribute,
         Stripe,
@@ -19,6 +39,8 @@ options:
         DistributedAndReplicate,
         DistributedAndStripedAndReplicate,
         DistributedAndDisperse.
+      For more information about these cluster types please see here:
+      https://gluster.readthedocs.io/en/latest/Quick-Start-Guide/Architecture/#types-of-volumes
   replication_level:
     type: int
     default: 3
