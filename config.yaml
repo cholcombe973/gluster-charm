@@ -9,7 +9,7 @@ options:
     type: string
     default:
     description: |
-      The devices to format and set up as brick volumes.
+      Space separated device list to format and set up as brick volumes.
 
       These devices are the range of devices that will be checked for and
       used across all service units, in addition to any volumes attached
