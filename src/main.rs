@@ -2,6 +2,7 @@ mod actions;
 mod apt;
 mod block;
 mod ctdb;
+mod hooks;
 mod metrics;
 mod samba;
 mod updatedb;
@@ -18,28 +19,32 @@ extern crate serde_yaml;
 extern crate uuid;
 
 use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
+use hooks::brick_attached::brick_attached;
+use hooks::brick_detached::brick_detached;
+use hooks::config_changed::config_changed;
+use hooks::fuse_relation_joined::fuse_relation_joined;
+use hooks::nfs_relation_joined::nfs_relation_joined;
+use hooks::server_changed::server_changed;
+use hooks::server_removed::server_removed;
 use metrics::collect_metrics;
 
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::fs::{create_dir, File};
-use std::io::{Read, Write};
-use std::net::IpAddr;
+use std::fs::create_dir;
+use std::io::Write;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
 use debian::version::Version;
-use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
-use gluster::peer::{peer_list, peer_probe, peer_status, Peer, State};
+use gluster::peer::{peer_probe, peer_status, Peer, State};
 use gluster::volume::*;
 use ipnetwork::IpNetwork;
 use itertools::Itertools;
+use juju::{JujuError, unitdata};
 use resolve::address::address_name;
-use samba::setup_samba;
 
 
 #[cfg(test)]
@@ -188,133 +193,6 @@ fn create_sysctl<T: Write>(sysctl: String, f: &mut T) -> Result<usize, String> {
     Ok(bytes_written)
 }
 
-fn config_changed() -> Result<(), String> {
-    // If either of these fail we fail the hook
-    check_for_new_devices()?;
-    check_for_upgrade()?;
-
-    // If this fails don't fail the hook
-    if let Err(err) = check_for_sysctl() {
-        log!(format!("Setting sysctl's failed with error: {}", err),
-             Error);
-    }
-    return Ok(());
-}
-
-fn check_for_new_devices() -> Result<(), String> {
-    log!("Checking for new devices", Info);
-    let config = juju::Config::new().map_err(|e| e.to_string())?;
-    if config.changed("brick_devices").map_err(|e| e.to_string())? {
-        // Get the changed list of brick devices and initialize each one
-        let brick_paths: Vec<PathBuf> = get_config_value("brick_devices")
-            .unwrap_or("".to_string())
-            .split(" ")
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty())
-            .map(|s| PathBuf::from(s))
-            .collect();
-        // Check for any devices that are mounted and skip those.  They're already taken care of
-        for brick in brick_paths {
-            if block::is_block_device(&brick).is_err() {
-                log!(format!("{:?} is not a block device. Skipping.", brick));
-                continue;
-            }
-            // If ephemeral-unmount is set and the directory is mounted we unmount it.
-            // Otherwise nothing happens
-            ephemeral_unmount()?; // TODO: Should this fail the hook or just skip?
-
-            let brick_filename = match brick.file_name() {
-                Some(name) => name,
-                None => {
-                    log!(format!("Unable to determine filename for device: {:?}. Skipping",
-                                 brick),
-                         Error);
-                    continue;
-                }
-            };
-            let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
-            log!(format!("Checking if {:?} is mounted", mount_path));
-            if Path::new(&mount_path).exists() {
-                match is_mounted(&mount_path) {
-                    Ok(mounted) => {
-                        if mounted {
-                            log!(format!("{:?} is mounted. Skipping", brick), Error);
-                            continue;
-                        }
-                    }
-                    Err(_) => {}
-                };
-            }
-            if !device_initialized(&brick) {
-                log!(format!("Calling initialize_storage for {:?}", brick));
-                initialize_storage(&brick)?;
-            }
-        }
-    } else {
-        log!("No new devices found");
-    }
-    Ok(())
-}
-
-fn check_for_sysctl() -> Result<(), String> {
-    let config = juju::Config::new().map_err(|e| e.to_string())?;
-    if config.changed("sysctl").map_err(|e| e.to_string())? {
-        let config_path = Path::new("/etc/sysctl.d/50-gluster-charm.conf");
-        let mut sysctl_file = File::create(config_path).map_err(|e| e.to_string())?;
-        let sysctl_dict = juju::config_get("sysctl").map_err(|e| e.to_string())?;
-        create_sysctl(sysctl_dict, &mut sysctl_file)?;
-        // Reload sysctl's
-        let mut cmd = std::process::Command::new("sysctl");
-        cmd.arg("-p");
-        cmd.arg(&config_path.to_string_lossy().into_owned());
-        let output = cmd.output().map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-        }
-    }
-    Ok(())
-}
-
-// If the config has changed this will initiated a rolling upgrade
-fn check_for_upgrade() -> Result<(), String> {
-    let config = juju::Config::new().map_err(|e| e.to_string())?;
-    if !config.changed("source").map_err(|e| e.to_string())? {
-        // No upgrade requested
-        log!("No upgrade requested");
-        return Ok(());
-    }
-
-    log!("Getting current_version");
-    let current_version = get_glusterfs_version()?;
-
-    log!("Adding new source line");
-    let source = juju::config_get("source").map_err(|e| e.to_string())?;
-    apt::add_source(&source)?;
-    log!("Calling apt update");
-    apt::apt_update()?;
-
-    log!("Getting proposed_version");
-    let proposed_version = apt::get_candidate_package_version("glusterfs-server")?;
-
-    // Using semantic versioning if the new version is greater than we allow the upgrade
-    if proposed_version > current_version {
-        log!(format!("current_version: {}", current_version));
-        log!(format!("new_version: {}", proposed_version));
-        log!(format!("{} to {} is a valid upgrade path.  Proceeding.",
-                     current_version,
-                     proposed_version));
-        return upgrade::roll_cluster(&proposed_version);
-    } else {
-        // Log a helpful error message
-        log!(format!("Invalid upgrade path from {} to {}. The new version needs to be \
-                            greater than the old version",
-                     current_version,
-                     proposed_version),
-             Error);
-        return Ok(());
-    }
-}
-
 // Return all the virtual ip networks that will be used
 fn get_cluster_networks() -> Result<Vec<ctdb::VirtualIp>, String> {
     let mut cluster_networks: Vec<ctdb::VirtualIp> = Vec::new();
@@ -334,46 +212,6 @@ fn get_cluster_networks() -> Result<Vec<ctdb::VirtualIp>, String> {
         });
     }
     Ok(cluster_networks)
-}
-
-// Add all the peers in the gluster cluster to the ctdb cluster
-fn setup_ctdb() -> Result<(), String> {
-    if juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?.is_empty() {
-        // virtual_ip_addresses isn't set.  Skip setting ctdb up
-        return Ok(());
-    }
-    log!("setting up ctdb");
-    let peers = peer_list().map_err(|e| e.to_string())?;
-    log!(format!("Got ctdb peer list: {:?}", peers));
-    let mut cluster_addresses: Vec<IpAddr> = Vec::new();
-    for peer in peers {
-        let address = IpAddr::from_str(&peer.hostname).map_err(|e| e.to_string())?;
-        cluster_addresses.push(address)
-    }
-
-    log!("writing /etc/default/ctdb");
-    let mut ctdb_conf = File::create("/etc/default/ctdb").map_err(|e| e.to_string())?;
-    ctdb::render_ctdb_configuration(&mut ctdb_conf).map_err(|e| e.to_string())?;
-
-    let cluster_networks = get_cluster_networks()?;
-
-    log!("writing /etc/ctdb/public_addresses");
-    let mut public_addresses =
-        File::create("/etc/ctdb/public_addresses").map_err(|e| e.to_string())?;
-    ctdb::render_ctdb_public_addresses(&mut public_addresses, &cluster_networks)
-        .map_err(|e| e.to_string())?;
-
-    log!("writing /etc/ctdb/nodes");
-    let mut cluster_nodes = File::create("/etc/ctdb/nodes").map_err(|e| e.to_string())?;
-
-    ctdb::render_ctdb_cluster_nodes(&mut cluster_nodes, &cluster_addresses)
-        .map_err(|e| e.to_string())?;
-
-    // Start the ctdb service
-    log!("Starting ctdb");
-    apt::service_start("ctdb")?;
-
-    Ok(())
 }
 
 fn peers_are_ready(peers: Result<Vec<Peer>, gluster::GlusterError>) -> bool {
@@ -497,506 +335,20 @@ fn ephemeral_unmount() -> Result<(), String> {
     }
 }
 
-// This function will take into account the replication level and
-// try its hardest to produce a list of bricks that satisfy this:
-// 1. Are not already in the volume
-// 2. Sufficient hosts to satisfy replication level
-// 3. Stripped across the hosts
-// If insufficient hosts exist to satisfy this replication level this will return no new bricks
-// to add
-fn get_brick_list(peers: &Vec<Peer>,
-                  volume: Option<Volume>)
-                  -> Result<Vec<gluster::volume::Brick>, Status> {
-
-    // Default to 3 replicas if the parsing fails
-    let replica_config = get_config_value("replication_level").unwrap_or("3".to_string());
-    let replicas = replica_config.parse().unwrap_or(3);
-    let config_brick_devices: Vec<String> = get_config_value("brick_devices")
-        .unwrap_or("".to_string())
-        .split(" ")
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    log!(format!("user config storage_list: {:?}", config_brick_devices));
-    let mut brick_paths: Vec<String> = Vec::new();
-
-    let juju_storage_bricks = juju::storage_list().unwrap();
-    log!(format!("juju storage_list: {:?}", juju_storage_bricks));
-
-    // Add any devices that were set with juju storage
-    for brick in juju_storage_bricks.lines() {
-        // This is the /dev/ location.
-        let storage_location = juju::storage_get(brick.trim()).unwrap();
-        // Translate to mount location
-        let brick_path = PathBuf::from(storage_location.trim());
-        let brick_filename = match brick_path.file_name() {
-            Some(name) => name,
-            None => {
-                log!(format!("Unable to determine filename for device: {:?}. Skipping",
-                             brick),
-                     Error);
-                continue;
-            }
-        };
-        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
-
-        brick_paths.push(mount_path);
-    }
-
-    // Add any devices that were set with the config.yaml
-    for brick in config_brick_devices {
-        let brick_path = PathBuf::from(brick);
-
-        if block::is_block_device(&brick_path).is_err() {
-            log!(format!("{:?} is not a block device. Skipping.", brick_path));
-            continue;
-        }
-        // If ephemeral-unmount is set and the directory is mounted we unmount it.
-        // Otherwise nothing happens
-        // TODO: Should this fail the hook or just skip?
-        ephemeral_unmount().map_err(|e| Status::InvalidConfig(e))?;
-
-        // Translate to mount location
-        let brick_filename = match brick_path.file_name() {
-            Some(name) => name,
-            None => {
-                log!(format!("Unable to determine filename for device: {:?}. Skipping",
-                             brick_path),
-                     Error);
-                continue;
-            }
-        };
-        // This needs to be called for the user config devices but not for juju storage devices
-        // Juju storage has a separate hook that fires to ensure the devices are already setup
-        if !device_initialized(&brick_path) {
-            log!(format!("Calling initialize_storage for {:?}", brick_path));
-            initialize_storage(&brick_path)?;
-        }
-
-        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
-        brick_paths.push(mount_path);
-    }
-
-    if volume.is_none() {
-        log!("Volume is none");
-        // number of bricks % replicas == 0 then we're ok to proceed
-        if peers.len() < replicas {
-            // Not enough peers to replicate across
-            log!("Not enough peers to satisfy the replication level for the Gluster \
-                        volume.  Waiting for more peers to join.");
-            return Err(Status::WaitForMorePeers);
-        } else if peers.len() == replicas {
-            // Case 1: A perfect marriage of peers and number of replicas
-            log!("Number of peers and number of replicas match");
-            return Ok(brick_and_server_cartesian_product(peers, &brick_paths));
-        } else {
-            // Case 2: We have a mismatch of replicas and hosts
-            // Take as many as we can and leave the rest for a later time
-            let count = peers.len() - (peers.len() % replicas);
-            let mut new_peers = peers.clone();
-
-            // Drop these peers off the end of the list
-            new_peers.truncate(count);
-            log!(format!("Too many new peers.  Dropping {} peers off the list", count));
-            return Ok(brick_and_server_cartesian_product(&new_peers, &brick_paths));
-        }
-    } else {
-        // Existing volume.  Build a differential list.
-        log!("Existing volume.  Building differential brick list");
-        let mut new_peers = find_new_peers(peers, &volume.unwrap());
-
-        if new_peers.len() < replicas {
-            log!("New peers found are less than needed by the replica count");
-            return Err(Status::WaitForMorePeers);
-        } else if new_peers.len() == replicas {
-            log!("New peers and number of replicas match");
-            return Ok(brick_and_server_cartesian_product(&new_peers, &brick_paths));
-        } else {
-            let count = new_peers.len() - (new_peers.len() % replicas);
-            // Drop these peers off the end of the list
-            log!(format!("Too many new peers.  Dropping {} peers off the list", count));
-            new_peers.truncate(count);
-            return Ok(brick_and_server_cartesian_product(&new_peers, &brick_paths));
-        }
-    }
-}
-
-// Create a new volume if enough peers are available
-fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Status, String> {
-    let cluster_type_config = get_config_value("cluster_type")?;
-    let cluster_type = VolumeType::from_str(&cluster_type_config);
-    let volume_name = get_config_value("volume_name")?;
-    let replicas = match get_config_value("replication_level")?.parse() {
-        Ok(r) => r,
-        Err(e) => {
-            log!(format!("Invalid config value for replicas.  Defaulting to 3. Error was \
-                                {}",
-                         e),
-                 Error);
-            3
-        }
-    };
-
-    // Make sure all peers are in the cluster
-    // spinlock
-    wait_for_peers()?;
-
-    // Build the brick list
-    let brick_list = match get_brick_list(&peers, volume_info) {
-        Ok(list) => list,
-        Err(e) => {
-            match e {
-                Status::WaitForMorePeers => {
-                    log!("Waiting for more peers", Info);
-                    status_set!(Maintenance "Waiting for more peers");
-                    return Ok(Status::WaitForMorePeers);
-                }
-                Status::InvalidConfig(config_err) => {
-                    return Err(config_err);
-                }
-                _ => {
-                    // Some other error
-                    return Err(format!("Unknown error in create volume: {:?}", e));
-                }
-            }
-        }
-    };
-    log!(format!("Got brick list: {:?}", brick_list));
-
-    // Check to make sure the bricks are formatted and mounted
-    // let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
-
-    log!(format!("Creating volume of type {:?} with brick list {:?}",
-                 cluster_type,
-                 brick_list),
-         Info);
-
-    match cluster_type {
-        VolumeType::Distribute => {
-            let _ = volume_create_distributed(&volume_name, Transport::Tcp, brick_list, true)
-                .map_err(|e| e.to_string());
-            Ok(Status::Created)
-        }
-        VolumeType::Stripe => {
-            let _ = volume_create_striped(&volume_name, 3, Transport::Tcp, brick_list, true)
-                .map_err(|e| e.to_string());
-            Ok(Status::Created)
-        }
-        VolumeType::Replicate => {
-            let _ =
-                volume_create_replicated(&volume_name, replicas, Transport::Tcp, brick_list, true)
-                    .map_err(|e| e.to_string());
-            Ok(Status::Created)
-        }
-        VolumeType::StripedAndReplicate => {
-            let _ = volume_create_striped_replicated(&volume_name,
-                                                     3,
-                                                     3,
-                                                     Transport::Tcp,
-                                                     brick_list,
-                                                     true)
-                .map_err(|e| e.to_string());
-            Ok(Status::Created)
-        }
-        VolumeType::Disperse => {
-            let _ = volume_create_erasure(&volume_name, 3, 1, Transport::Tcp, brick_list, true)
-                .map_err(|e| e.to_string());
-            Ok(Status::Created)
-        }
-        // VolumeType::Tier => {},
-        VolumeType::DistributedAndStripe => {
-            let _ = volume_create_striped(&volume_name, 3, Transport::Tcp, brick_list, true)
-                .map_err(|e| e.to_string());
-            Ok(Status::Created)
-        }
-        VolumeType::DistributedAndReplicate => {
-            let _ = volume_create_replicated(&volume_name, 3, Transport::Tcp, brick_list, true)
-                .map_err(|e| e.to_string());
-            Ok(Status::Created)
-        }
-        VolumeType::DistributedAndStripedAndReplicate => {
-            let _ = volume_create_striped_replicated(&volume_name,
-                                                     3,
-                                                     3,
-                                                     Transport::Tcp,
-                                                     brick_list,
-                                                     true)
-                .map_err(|e| e.to_string());
-            Ok(Status::Created)
-        }
-        VolumeType::DistributedAndDisperse => {
-            let _ = volume_create_erasure(
-                &volume_name,
-                brick_list.len()-1, //TODO: This number has to be lower than the brick length
-                1,
-                Transport::Tcp,
-                brick_list,
-                true).map_err(|e| e.to_string());
-            Ok(Status::Created)
-        }
-    }
-}
-
-// Expands the volume by X servers+bricks
-// Adds bricks and then runs a rebalance
-fn expand_volume(peers: Vec<Peer>, volume_info: Option<Volume>) -> Result<i32, String> {
-    let volume_name = get_config_value("volume_name")?;
-
-    // Are there new peers?
-    log!(format!("Checking for new peers to expand the volume named {}",
-                 volume_name));
-
-    // Build the brick list
-    let brick_list = match get_brick_list(&peers, volume_info) {
-        Ok(list) => list,
-        Err(e) => {
-            match e {
-                Status::WaitForMorePeers => {
-                    log!("Waiting for more peers", Info);
-                    return Ok(0);
-                }
-                Status::InvalidConfig(config_err) => {
-                    return Err(config_err);
-                }
-                _ => {
-                    // Some other error
-                    return Err(format!("Unknown error in expand volume: {:?}", e));
-                }
-            }
-        }
-    };
-
-    // Check to make sure the bricks are formatted and mounted
-    // let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
-
-    log!(format!("Expanding volume with brick list: {:?}", brick_list),
-         Info);
-    match volume_add_brick(&volume_name, brick_list, true) {
-        Ok(o) => Ok(o),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-fn shrink_volume(peer: Peer, volume_info: Option<Volume>) -> Result<i32, String> {
-    let volume_name = get_config_value("volume_name")?;
-
-    log!(format!("Shrinking volume named  {}", volume_name), Info);
-
-    let peers: Vec<Peer> = vec![peer];
-
-    // Build the brick list
-    let brick_list = match get_brick_list(&peers, volume_info) {
-        Ok(list) => list,
-        Err(e) => {
-            match e {
-                Status::WaitForMorePeers => {
-                    log!("Waiting for more peers", Info);
-                    return Ok(0);
-                }
-                Status::InvalidConfig(config_err) => {
-                    return Err(config_err);
-                }
-                _ => {
-                    // Some other error
-                    return Err(format!("Unknown error in shrink volume: {:?}", e));
-                }
-            }
-        }
-    };
-
-    log!(format!("Shrinking volume with brick list: {:?}", brick_list),
-         Info);
-    match gluster::volume::volume_remove_brick(&volume_name, brick_list, true) {
-        Ok(o) => Ok(o),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
-    match gluster::volume::volume_start(&volume_name, false) {
-        Ok(_) => {
-            log!("Starting volume succeeded.".to_string(), Info);
-            status_set!(Active "Starting volume succeeded.");
-            mount_cluster(&volume_name)?;
-            let mut settings: Vec<GlusterOption> = Vec::new();
-            // Starting in gluster 3.8 NFS is disabled in favor of ganesha.  I'd like to stick
-            // with the legacy version a bit longer.
-            settings.push(GlusterOption::NfsDisable(Toggle::Off));
-            settings.push(GlusterOption::DiagnosticsLatencyMeasurement(Toggle::On));
-            settings.push(GlusterOption::DiagnosticsCountFopHits(Toggle::On));
-            settings.push(GlusterOption::DiagnosticsFopSampleInterval(5));
-            // Dump FOP stats every 5 seconds.
-            // NOTE: On slow main drives this can severely impact them
-            settings.push(GlusterOption::DiagnosticsStatsDumpInterval(30));
-            // 1HR DNS timeout
-            settings.push(GlusterOption::DiagnosticsStatsDnscacheTtlSec(3600));
-
-            // Set parallel-readdir on.  This has a very nice performance benefit
-            // as the number of bricks/directories grows
-            settings.push(GlusterOption::PerformanceParallelReadDir(Toggle::On));
-
-            settings.push(GlusterOption::PerformanceReadDirAhead(Toggle::On));
-            // Start with 20MB and go from there
-            settings.push(GlusterOption::PerformanceReadDirAheadCacheLimit(1024 * 1024 * 20));
-
-            // Set the split brain policy if requested
-            if let Ok(splitbrain_policy) = juju::config_get("splitbrain_policy") {
-                match SplitBrainPolicy::from_str(&splitbrain_policy) {
-                    Ok(policy) => {
-                        settings.push(GlusterOption::FavoriteChildPolicy(policy));
-                    }
-                    Err(_) => {
-                        log!(format!("Failed to parse splitbrain_policy config setting: \
-                                            {}.",
-                                     splitbrain_policy),
-                             Error);
-                    }
-                };
-            }
-            let _ = volume_set_options(&volume_name, settings).map_err(|e| e.to_string())?;
-
-            return Ok(());
-        }
-        Err(e) => {
-            log!(format!("Start volume failed with output: {:?}", e), Error);
-            status_set!(Blocked "Start volume failed.  Please check juju debug-log.");
-            return Err(e.to_string());
-        }
-    };
-}
-
-fn create_gluster_volume(volume_name: &str, peers: Vec<Peer>) -> Result<(), String> {
-    match create_volume(&peers, None) {
-        Ok(status) => {
-            match status {
-                Status::Created => {
-                    log!("Create volume succeeded.", Info);
-                    status_set!(Maintenance "Create volume succeeded");
-                    start_gluster_volume(&volume_name)?;
-                    // Poke the other peers to update their status
-                    juju::relation_set("started", "true").map_err(|e| e.to_string())?;
-                    return Ok(());
-                }
-                Status::WaitForMorePeers => {
-                    log!("Waiting for all peers to enter the Peer in Cluster status");
-                    status_set!(Maintenance
-                        "Waiting for all peers to enter the \"Peer in Cluster status\"");
-                    return Ok(());
-                }
-                _ => {
-                    // Status is failed
-                    // What should I return here?
-                    return Ok(());
-                }
-            }
-        }
-        Err(e) => {
-            log!(format!("Create volume failed with output: {}", e), Error);
-            status_set!(Blocked "Create volume failed.  Please check juju debug-log.");
-            return Err(e.to_string());
-        }
-    };
-}
-
-fn server_changed() -> Result<(), String> {
-    let context = juju::Context::new_from_env();
-    let leader = juju::is_leader().map_err(|e| e.to_string())?;
-    let volume_name = get_config_value("volume_name")?;
-
-    if leader {
-        log!(format!("I am the leader: {}", context.relation_id));
-        log!("Loading config", Info);
-
-        let mut f = File::open("config.yaml").map_err(|e| e.to_string())?;
-        let mut s = String::new();
-        f.read_to_string(&mut s).map_err(|e| e.to_string())?;
-
-        status_set!(Maintenance "Checking for new peers to probe");
-
-        let mut peers = peer_list().map_err(|e| e.to_string())?;
-        log!(format!("peer list: {:?}", peers));
-        let related_units = juju::relation_list().map_err(|e| e.to_string())?;
-        probe_in_units(&peers, related_units)?;
-        // Update our peer list
-        peers = peer_list().map_err(|e| e.to_string())?;
-
-        // Everyone is in.  Lets see if a volume exists
-        let volume_info = volume_info(&volume_name);
-        let existing_volume: bool;
-        match volume_info {
-            Ok(_) => {
-                log!(format!("Expanding volume {}", volume_name), Info);
-                status_set!(Maintenance format!("Expanding volume {}", volume_name));
-
-                match expand_volume(peers, volume_info.ok()) {
-                    Ok(v) => {
-                        log!(format!("Expand volume succeeded.  Return code: {}", v),
-                             Info);
-                        status_set!(Active "Expand volume succeeded.");
-                        // Poke the other peers to update their status
-                        juju::relation_set("expanded", "true").map_err(|e| e.to_string())?;
-                        // Ensure the cluster is mounted
-                        mount_cluster(&volume_name)?;
-                        setup_ctdb()?;
-                        setup_samba(&volume_name)?;
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        log!(format!("Expand volume failed with output: {}", e), Error);
-                        status_set!(Blocked "Expand volume failed.  Please check juju debug-log.");
-                        return Err(e);
-                    }
-                }
-            }
-            Err(gluster::GlusterError::NoVolumesPresent) => {
-                existing_volume = false;
-            }
-            _ => {
-                return Err("Volume info command failed".to_string());
-            }
-        }
-        if !existing_volume {
-            log!(format!("Creating volume {}", volume_name), Info);
-            status_set!(Maintenance format!("Creating volume {}", volume_name));
-            create_gluster_volume(&volume_name, peers)?;
-            mount_cluster(&volume_name)?;
-            setup_ctdb()?;
-            setup_samba(&volume_name)?;
-        }
-        return Ok(());
-    } else {
-        // Non leader units
-        let vol_started = juju::relation_get("started").map_err(|e| e.to_string())?;
-        if !vol_started.is_empty() {
-            mount_cluster(&volume_name)?;
-            // Setup ctdb and samba after the volume comes up on non leader units
-            setup_ctdb()?;
-            setup_samba(&volume_name)?;
-        }
-
-        return Ok(());
-    }
-}
-
-fn server_removed() -> Result<(), String> {
-    let private_address = juju::unit_get_private_addr().map_err(|e| e.to_string())?;
-    log!(format!("Removing server: {}", private_address), Info);
-    return Ok(());
-}
-
 // Given a dev device path /dev/xvdb this will check to see if the device
 // has been formatted and mounted
-fn device_initialized(brick_path: &PathBuf) -> Result<bool, String> {
-    let mut file = File::open("/proc/mounts").map_err(|e| e.to_string())?;
-
-    let mut mounts = String::new();
-    file.read_to_string(&mut mount).map_err(|e| e.to_string())?;
-
-    //mounts.lines().map(|mount| mount.split(" "))
+fn device_initialized(brick_path: &PathBuf) -> Result<bool, JujuError> {
+    // Connect to the default unitdata database
+    let unit_storage = unitdata::Storage::new(None)?;
+    let unit_info = unit_storage.get::<bool>(&brick_path.to_string_lossy())?;
+    // Either it's Some() and we know about the unit
+    // or it's None and we don't know and therefore it's not initialized
+    Ok(unit_info.unwrap_or(false))
 }
 
 // Format and mount block devices to ready them for consumption by Gluster
 fn initialize_storage(device_path: &PathBuf) -> Result<(), String> {
+    let unit_storage = unitdata::Storage::new(None).map_err(|e| e.to_string())?;
     let filesystem_config_value = get_config_value("filesystem_type")?;
     let filesystem_type = block::FilesystemType::from_str(&filesystem_config_value);
     let mount_path = format!("/mnt/{}",
@@ -1083,35 +435,10 @@ fn initialize_storage(device_path: &PathBuf) -> Result<(), String> {
 
     log!(format!("Removing mount path from updatedb {:?}", mount_path),
          Info);
+    unit_storage.set(&device_path.to_string_lossy(), true).map_err(|e| e.to_string())?;
     updatedb::add_to_prunepath(&mount_path, &Path::new("/etc/updatedb.conf"))
         .map_err(|e| e.to_string())?;
     return Ok(());
-}
-
-fn brick_attached() -> Result<(), String> {
-    let brick_location = juju::storage_get_location().map_err(|e| e.to_string())?;
-    let brick_path = PathBuf::from(brick_location.trim());
-
-    // Format our bricks and mount them
-    initialize_storage(&brick_path)?;
-    Ok(())
-}
-
-fn brick_detached() -> Result<(), String> {
-    // TODO: Do nothing for now
-    return Ok(());
-}
-
-fn fuse_relation_joined() -> Result<(), String> {
-    // Fuse clients only need one ip address and they can discover the rest
-    let public_addr = try!(juju::unit_get_public_addr().map_err(|e| e.to_string())).to_string();
-    let volumes = volume_list();
-    juju::relation_set("gluster-public-address", &public_addr).map_err(|e| e.to_string())?;
-    if let Some(vols) = volumes {
-        juju::relation_set("volumes", &vols.join(" ")).map_err(|e| e.to_string())?;
-    }
-
-    Ok(())
 }
 
 fn resolve_first_vip_to_dns() -> Result<String, String> {
@@ -1134,25 +461,6 @@ fn resolve_first_vip_to_dns() -> Result<String, String> {
             Err("virtual_ip_addresses has no addresses set".to_string())
         }
     }
-}
-
-fn nfs_relation_joined() -> Result<(), String> {;
-    let config_value = juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?;
-    let volumes = volume_list();
-    if let Some(vols) = volumes {
-        juju::relation_set("volumes", &vols.join(" ")).map_err(|e| e.to_string())?;
-    }
-
-    // virtual_ip_addresses isn't set.  Handing back my public address
-    if config_value.is_empty() {
-        let public_addr = try!(juju::unit_get_public_addr().map_err(|e| e.to_string())).to_string();
-        juju::relation_set("gluster-public-address", &public_addr).map_err(|e| e.to_string())?;
-    } else {
-        // virtual_ip_addresses is set.  Handing back the DNS resolved address
-        let dns_name = resolve_first_vip_to_dns()?;
-        juju::relation_set("gluster-public-address", &dns_name).map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 
 fn get_glusterfs_version() -> Result<Version, String> {
