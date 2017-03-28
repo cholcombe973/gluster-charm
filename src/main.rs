@@ -315,6 +315,9 @@ fn brick_and_server_cartesian_product(peers: &Vec<Peer>,
 fn ephemeral_unmount() -> Result<(), String> {
     match get_config_value("ephemeral_unmount") {
         Ok(mountpoint) => {
+            if mountpoint.is_empty() {
+                return Ok(());
+            }
             if is_mounted(&mountpoint)? {
                 let mut cmd = std::process::Command::new("umount");
                 cmd.arg(mountpoint);
@@ -339,8 +342,11 @@ fn ephemeral_unmount() -> Result<(), String> {
 // has been formatted and mounted
 fn device_initialized(brick_path: &PathBuf) -> Result<bool, JujuError> {
     // Connect to the default unitdata database
+    log!("Connecting to unitdata storage");
     let unit_storage = unitdata::Storage::new(None)?;
+    log!("Getting unit_info");
     let unit_info = unit_storage.get::<bool>(&brick_path.to_string_lossy())?;
+    log!(format!("unit_info: {:?}", unit_info));
     // Either it's Some() and we know about the unit
     // or it's None and we don't know and therefore it's not initialized
     Ok(unit_info.unwrap_or(false))

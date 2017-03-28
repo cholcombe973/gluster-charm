@@ -335,6 +335,7 @@ fn get_brick_list(peers: &Vec<Peer>,
     // Add any devices that were set with the config.yaml
     for brick in config_brick_devices {
         let brick_path = PathBuf::from(brick);
+        log!(format!("brick_path: {:?}", brick_path));
 
         if block::is_block_device(&brick_path).is_err() {
             log!(format!("{:?} is not a block device. Skipping.", brick_path));
@@ -343,6 +344,7 @@ fn get_brick_list(peers: &Vec<Peer>,
         // If ephemeral-unmount is set and the directory is mounted we unmount it.
         // Otherwise nothing happens
         // TODO: Should this fail the hook or just skip?
+        log!("Checking for ephemeral unmount");
         ephemeral_unmount().map_err(|e| Status::InvalidConfig(e))?;
 
         // Translate to mount location

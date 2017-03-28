@@ -5,7 +5,6 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use gluster::volume::*;
 use super::super::{create_sysctl, ephemeral_unmount, device_initialized, get_config_value,
                    get_glusterfs_version, initialize_storage, is_mounted};
 use super::super::apt;
