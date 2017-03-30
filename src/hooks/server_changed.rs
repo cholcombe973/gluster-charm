@@ -1,5 +1,6 @@
 extern crate gluster;
 extern crate juju;
+extern crate rayon;
 
 use std::io::Read;
 use std::net::IpAddr;
@@ -9,6 +10,7 @@ use std::str::FromStr;
 use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
 use gluster::peer::{peer_list, Peer};
 use gluster::volume::*;
+use self::rayon::prelude::*;
 use super::super::apt;
 use super::super::block;
 use super::super::ctdb;
@@ -18,6 +20,14 @@ use super::super::{brick_and_server_cartesian_product, device_initialized, ephem
                    mount_cluster, probe_in_units, Status, wait_for_peers};
 
 use std::fs::File;
+
+#[derive(Debug)]
+struct Device {
+    is_block_device: bool,
+    initialized: bool,
+    mount_path: String,
+    dev_path: PathBuf,
+}
 
 pub fn server_changed() -> Result<(), String> {
     let context = juju::Context::new_from_env();
@@ -296,29 +306,57 @@ fn expand_volume(peers: Vec<Peer>, volume_info: Option<Volume>) -> Result<i32, S
 fn get_brick_list(peers: &Vec<Peer>,
                   volume: Option<Volume>)
                   -> Result<Vec<gluster::volume::Brick>, Status> {
-
     // Default to 3 replicas if the parsing fails
+    let mut brick_devices: Vec<Device> = Vec::new();
+
     let replica_config = get_config_value("replication_level").unwrap_or("3".to_string());
     let replicas = replica_config.parse().unwrap_or(3);
-    let config_brick_devices: Vec<String> = get_config_value("brick_devices")
+
+    // TODO: Should this fail the hook or just keep going?
+    log!("Checking for ephemeral unmount");
+    ephemeral_unmount().map_err(|e| Status::InvalidConfig(e))?;
+
+    // Get user configured storage devices
+    log!("Gathering list of manually specified brick devices");
+    let manual_config_brick_devices: Vec<String> = get_config_value("brick_devices")
         .unwrap_or("".to_string())
         .split(" ")
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    log!(format!("user config storage_list: {:?}", config_brick_devices));
-    let mut brick_paths: Vec<String> = Vec::new();
-
-    let juju_storage_bricks = juju::storage_list().unwrap();
-    log!(format!("juju storage_list: {:?}", juju_storage_bricks));
-
-    // Add any devices that were set with juju storage
-    for brick in juju_storage_bricks.lines() {
+    for brick in manual_config_brick_devices {
+        let device_path = PathBuf::from(brick);
+        // Translate to mount location
+        let brick_filename = match device_path.file_name() {
+            Some(name) => name,
+            None => {
+                log!(format!("Unable to determine filename for device: {:?}. Skipping",
+                             device_path),
+                     Error);
+                continue;
+            }
+        };
+        log!(format!("Checking if {:?} is a block device", &device_path));
+        let is_block_device = block::is_block_device(&device_path).unwrap_or(false);
+        log!(format!("Checking if {:?} is initialized", &device_path));
+        let initialized = device_initialized(&device_path).unwrap_or(false);
+        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
+        brick_devices.push(Device {
+            is_block_device: is_block_device,
+            // All devices start at initialized is false
+            initialized: initialized,
+            dev_path: device_path.clone(),
+            mount_path: mount_path,
+        });
+    }
+    log!("Gathering list of juju storage brick devices");
+    //Get juju storage devices
+    for brick in juju::storage_list().unwrap_or("".to_string()).lines() {
         // This is the /dev/ location.
         let storage_location = juju::storage_get(brick.trim()).unwrap();
         // Translate to mount location
-        let brick_path = PathBuf::from(storage_location.trim());
-        let brick_filename = match brick_path.file_name() {
+        let device_path = PathBuf::from(storage_location.trim());
+        let brick_filename = match device_path.file_name() {
             Some(name) => name,
             None => {
                 log!(format!("Unable to determine filename for device: {:?}. Skipping",
@@ -328,45 +366,41 @@ fn get_brick_list(peers: &Vec<Peer>,
             }
         };
         let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
+        log!(format!("Checking if {:?} is initialized", &device_path));
+        let initialized = device_initialized(&device_path).unwrap_or(false);
 
-        brick_paths.push(mount_path);
+        brick_devices.push(Device {
+            is_block_device: true,
+            initialized: initialized,
+            dev_path: device_path.clone(),
+            mount_path: mount_path,
+        });
     }
+    log!(format!("storage devices: {:?}", brick_devices));
 
     // Add any devices that were set with the config.yaml
-    for brick in config_brick_devices {
-        let brick_path = PathBuf::from(brick);
-        log!(format!("brick_path: {:?}", brick_path));
-
-        if block::is_block_device(&brick_path).is_err() {
-            log!(format!("{:?} is not a block device. Skipping.", brick_path));
-            continue;
-        }
-        // If ephemeral-unmount is set and the directory is mounted we unmount it.
-        // Otherwise nothing happens
-        // TODO: Should this fail the hook or just skip?
-        log!("Checking for ephemeral unmount");
-        ephemeral_unmount().map_err(|e| Status::InvalidConfig(e))?;
-
-        // Translate to mount location
-        let brick_filename = match brick_path.file_name() {
-            Some(name) => name,
-            None => {
-                log!(format!("Unable to determine filename for device: {:?}. Skipping",
-                             brick_path),
-                     Error);
-                continue;
-            }
-        };
+    brick_devices.par_iter_mut().map(|device| {
         // This needs to be called for the user config devices but not for juju storage devices
         // Juju storage has a separate hook that fires to ensure the devices are already setup
-        if !device_initialized(&brick_path).map_err(|e| Status::InvalidConfig(e.to_string()))? {
-            log!(format!("Calling initialize_storage for {:?}", brick_path));
-            initialize_storage(&brick_path).map_err(|e| Status::FailedToCreate(e.to_string()))?;
+        if !device.initialized {
+            log!(format!("Calling initialize_storage for {:?}", device.dev_path));
+            match initialize_storage(&device.dev_path) {
+                Ok(_) => {
+                    log!(format!("{:?} is not initialized", &device.dev_path));
+                    device.initialized = true;
+                }
+                Err(e) => {
+                    log!(format!("Failed to initialize device: {:?}. Error: {}",
+                                 &device.dev_path,
+                                 e),
+                         Error);
+                }
+            }
         }
+    });
 
-        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
-        brick_paths.push(mount_path);
-    }
+    let brick_paths: Vec<String> =
+        brick_devices.iter().map(|device| device.mount_path.clone()).collect();
 
     if volume.is_none() {
         log!("Volume is none");
