@@ -379,28 +379,38 @@ fn get_brick_list(peers: &Vec<Peer>,
     log!(format!("storage devices: {:?}", brick_devices));
 
     // Add any devices that were set with the config.yaml
-    brick_devices.par_iter_mut().map(|device| {
+    brick_devices.par_iter_mut().for_each(|device| {
         // This needs to be called for the user config devices but not for juju storage devices
         // Juju storage has a separate hook that fires to ensure the devices are already setup
-        if !device.initialized {
-            log!(format!("Calling initialize_storage for {:?}", device.dev_path));
-            match initialize_storage(&device.dev_path) {
-                Ok(_) => {
-                    log!(format!("{:?} is not initialized", &device.dev_path));
-                    device.initialized = true;
+        match device.initialized {
+            false => {
+                log!(format!("Calling initialize_storage for {:?}", device.dev_path));
+                match initialize_storage(&device.dev_path) {
+                    Ok(_) => {
+                        log!(format!("{:?} is not initialized", &device.dev_path));
+                        device.initialized = true;
+                    }
+                    Err(e) => {
+                        log!(format!("Failed to initialize device: {:?}. Error: {}",
+                                     &device.dev_path,
+                                     e),
+                             Error);
+                    }
                 }
-                Err(e) => {
-                    log!(format!("Failed to initialize device: {:?}. Error: {}",
-                                 &device.dev_path,
-                                 e),
-                         Error);
-                }
+            }
+            true => {
+                log!(format!("{:?} is already initialized", &device.dev_path));
             }
         }
     });
 
-    let brick_paths: Vec<String> =
-        brick_devices.iter().map(|device| device.mount_path.clone()).collect();
+    let brick_paths: Vec<String> = brick_devices.iter()
+        // Only operate on initialized devices
+        .filter(|device| device.initialized)
+        // Find their mount path
+        .map(|device| device.mount_path.clone())
+        .collect();
+    log!(format!("Usable brick paths: {:?}", brick_paths));
 
     if volume.is_none() {
         log!("Volume is none");
