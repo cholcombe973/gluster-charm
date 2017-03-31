@@ -1,7 +1,7 @@
 extern crate crossbeam;
 extern crate gluster;
 extern crate juju;
-extern crate rayon;
+//extern crate rayon;
 
 use std::io::Read;
 use std::net::IpAddr;
@@ -11,7 +11,7 @@ use std::str::FromStr;
 use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
 use gluster::peer::{peer_list, Peer};
 use gluster::volume::*;
-use self::rayon::prelude::*;
+//use self::rayon::prelude::*;
 use super::super::apt;
 use super::super::block;
 use super::super::ctdb;
@@ -384,11 +384,11 @@ fn get_brick_list(peers: &Vec<Peer>,
     log!(format!("storage devices: {:?}", brick_devices));
 
     // Format all drives in parallel
-    brick_devices.par_iter_mut().weight_max().for_each(|device| match device.initialized {
-        false => {
-            log!(format!("Calling initialize_storage for {:?}", device.dev_path));
-            crossbeam::scope(|scope| {
-                scope.spawn(|| match initialize_storage(&device.dev_path) {
+    crossbeam::scope(|scope| for device in &mut brick_devices {
+        match device.initialized {
+            false => {
+                log!(format!("Calling initialize_storage for {:?}", device.dev_path));
+                scope.spawn(move || match initialize_storage(&device.dev_path) {
                     Ok(_) => {
                         log!(format!("{:?} is not initialized", &device.dev_path));
                         device.initialized = true;
@@ -400,11 +400,10 @@ fn get_brick_list(peers: &Vec<Peer>,
                              Error);
                     }
                 });
-            });
-
-        }
-        true => {
-            log!(format!("{:?} is already initialized", &device.dev_path));
+            }
+            true => {
+                log!(format!("{:?} is already initialized", &device.dev_path));
+            }
         }
     });
 
