@@ -383,7 +383,7 @@ fn get_brick_list(peers: &Vec<Peer>,
     log!(format!("storage devices: {:?}", brick_devices));
 
     // Format all drives in parallel
-    brick_devices.par_iter_mut().for_each(|device| match device.initialized {
+    brick_devices.par_iter_mut().weight_max().for_each(|device| match device.initialized {
         false => {
             log!(format!("Calling initialize_storage for {:?}", device.dev_path));
             match initialize_storage(&device.dev_path) {
