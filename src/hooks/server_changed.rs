@@ -1,3 +1,4 @@
+extern crate crossbeam;
 extern crate gluster;
 extern crate juju;
 extern crate rayon;
@@ -386,18 +387,21 @@ fn get_brick_list(peers: &Vec<Peer>,
     brick_devices.par_iter_mut().weight_max().for_each(|device| match device.initialized {
         false => {
             log!(format!("Calling initialize_storage for {:?}", device.dev_path));
-            match initialize_storage(&device.dev_path) {
-                Ok(_) => {
-                    log!(format!("{:?} is not initialized", &device.dev_path));
-                    device.initialized = true;
-                }
-                Err(e) => {
-                    log!(format!("Failed to initialize device: {:?}. Error: {}",
-                                 &device.dev_path,
-                                 e),
-                         Error);
-                }
-            }
+            crossbeam::scope(|scope| {
+                scope.spawn(|| match initialize_storage(&device.dev_path) {
+                    Ok(_) => {
+                        log!(format!("{:?} is not initialized", &device.dev_path));
+                        device.initialized = true;
+                    }
+                    Err(e) => {
+                        log!(format!("Failed to initialize device: {:?}. Error: {}",
+                                     &device.dev_path,
+                                     e),
+                             Error);
+                    }
+                });
+            });
+
         }
         true => {
             log!(format!("{:?} is already initialized", &device.dev_path));
