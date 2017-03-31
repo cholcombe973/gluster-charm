@@ -338,6 +338,10 @@ fn get_brick_list(peers: &Vec<Peer>,
         };
         log!(format!("Checking if {:?} is a block device", &device_path));
         let is_block_device = block::is_block_device(&device_path).unwrap_or(false);
+        if !is_block_device {
+            log!("Skipping invalid block device");
+            continue;
+        }
         log!(format!("Checking if {:?} is initialized", &device_path));
         let initialized = device_initialized(&device_path).unwrap_or(false);
         let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
@@ -378,29 +382,25 @@ fn get_brick_list(peers: &Vec<Peer>,
     }
     log!(format!("storage devices: {:?}", brick_devices));
 
-    // Add any devices that were set with the config.yaml
-    brick_devices.par_iter_mut().for_each(|device| {
-        // This needs to be called for the user config devices but not for juju storage devices
-        // Juju storage has a separate hook that fires to ensure the devices are already setup
-        match device.initialized {
-            false => {
-                log!(format!("Calling initialize_storage for {:?}", device.dev_path));
-                match initialize_storage(&device.dev_path) {
-                    Ok(_) => {
-                        log!(format!("{:?} is not initialized", &device.dev_path));
-                        device.initialized = true;
-                    }
-                    Err(e) => {
-                        log!(format!("Failed to initialize device: {:?}. Error: {}",
-                                     &device.dev_path,
-                                     e),
-                             Error);
-                    }
+    // Format all drives in parallel
+    brick_devices.par_iter_mut().for_each(|device| match device.initialized {
+        false => {
+            log!(format!("Calling initialize_storage for {:?}", device.dev_path));
+            match initialize_storage(&device.dev_path) {
+                Ok(_) => {
+                    log!(format!("{:?} is not initialized", &device.dev_path));
+                    device.initialized = true;
+                }
+                Err(e) => {
+                    log!(format!("Failed to initialize device: {:?}. Error: {}",
+                                 &device.dev_path,
+                                 e),
+                         Error);
                 }
             }
-            true => {
-                log!(format!("{:?} is already initialized", &device.dev_path));
-            }
+        }
+        true => {
+            log!(format!("{:?} is already initialized", &device.dev_path));
         }
     });
 
