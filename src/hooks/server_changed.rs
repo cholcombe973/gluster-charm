@@ -1,7 +1,6 @@
 extern crate crossbeam;
 extern crate gluster;
 extern crate juju;
-//extern crate rayon;
 
 use std::io::Read;
 use std::net::IpAddr;
@@ -11,7 +10,6 @@ use std::str::FromStr;
 use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
 use gluster::peer::{peer_list, Peer};
 use gluster::volume::*;
-//use self::rayon::prelude::*;
 use super::super::apt;
 use super::super::block;
 use super::super::ctdb;
@@ -340,7 +338,7 @@ fn get_brick_list(peers: &Vec<Peer>,
         log!(format!("Checking if {:?} is a block device", &device_path));
         let is_block_device = block::is_block_device(&device_path).unwrap_or(false);
         if !is_block_device {
-            log!("Skipping invalid block device");
+            log!(format!("Skipping invalid block device: {:?}", &device_path));
             continue;
         }
         log!(format!("Checking if {:?} is initialized", &device_path));
