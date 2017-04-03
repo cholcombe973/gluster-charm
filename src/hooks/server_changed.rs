@@ -388,7 +388,7 @@ fn get_brick_list(peers: &Vec<Peer>,
                 log!(format!("Calling initialize_storage for {:?}", device.dev_path));
                 scope.spawn(move || match initialize_storage(&device.dev_path) {
                     Ok(_) => {
-                        log!(format!("{:?} is not initialized", &device.dev_path));
+                        log!(format!("{:?} is initialized", &device.dev_path));
                         device.initialized = true;
                     }
                     Err(e) => {
