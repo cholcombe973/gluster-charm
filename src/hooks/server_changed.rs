@@ -1,32 +1,27 @@
 extern crate crossbeam;
 extern crate gluster;
 extern crate juju;
+extern crate tokio_core;
+extern crate tokio_process;
 
 use std::io::Read;
 use std::net::IpAddr;
-use std::path::PathBuf;
 use std::str::FromStr;
 
 use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
 use gluster::peer::{peer_list, Peer};
 use gluster::volume::*;
+use self::tokio_core::reactor::Core;
+use self::tokio_process::OutputAsync;
 use super::super::apt;
 use super::super::block;
 use super::super::ctdb;
 use super::super::samba::setup_samba;
-use super::super::{brick_and_server_cartesian_product, device_initialized, ephemeral_unmount,
-                   find_new_peers, get_cluster_networks, get_config_value, initialize_storage,
-                   mount_cluster, probe_in_units, Status, wait_for_peers};
+use super::super::{brick_and_server_cartesian_product, ephemeral_unmount, find_new_peers,
+                   get_cluster_networks, get_config_value, initialize_storage, mount_cluster,
+                   probe_in_units, Status, wait_for_peers};
 
 use std::fs::File;
-
-#[derive(Debug)]
-struct Device {
-    is_block_device: bool,
-    initialized: bool,
-    mount_path: String,
-    dev_path: PathBuf,
-}
 
 pub fn server_changed() -> Result<(), String> {
     let context = juju::Context::new_from_env();
@@ -214,7 +209,7 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
                                                      Transport::Tcp,
                                                      brick_list,
                                                      true)
-                .map_err(|e| e.to_string());
+                    .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
         VolumeType::Disperse => {
@@ -240,7 +235,7 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
                                                      Transport::Tcp,
                                                      brick_list,
                                                      true)
-                .map_err(|e| e.to_string());
+                    .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
         VolumeType::DistributedAndDisperse => {
@@ -306,7 +301,7 @@ fn get_brick_list(peers: &Vec<Peer>,
                   volume: Option<Volume>)
                   -> Result<Vec<gluster::volume::Brick>, Status> {
     // Default to 3 replicas if the parsing fails
-    let mut brick_devices: Vec<Device> = Vec::new();
+    let mut brick_devices: Vec<block::BrickDevice> = Vec::new();
 
     let replica_config = get_config_value("replication_level").unwrap_or("3".to_string());
     let replicas = replica_config.parse().unwrap_or(3);
@@ -316,94 +311,31 @@ fn get_brick_list(peers: &Vec<Peer>,
     ephemeral_unmount().map_err(|e| Status::InvalidConfig(e))?;
 
     // Get user configured storage devices
-    log!("Gathering list of manually specified brick devices");
-    let manual_config_brick_devices: Vec<String> = get_config_value("brick_devices")
-        .unwrap_or("".to_string())
-        .split(" ")
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    for brick in manual_config_brick_devices {
-        let device_path = PathBuf::from(brick);
-        // Translate to mount location
-        let brick_filename = match device_path.file_name() {
-            Some(name) => name,
-            None => {
-                log!(format!("Unable to determine filename for device: {:?}. Skipping",
-                             device_path),
-                     Error);
-                continue;
-            }
-        };
-        log!(format!("Checking if {:?} is a block device", &device_path));
-        let is_block_device = block::is_block_device(&device_path).unwrap_or(false);
-        if !is_block_device {
-            log!(format!("Skipping invalid block device: {:?}", &device_path));
-            continue;
-        }
-        log!(format!("Checking if {:?} is initialized", &device_path));
-        let initialized = device_initialized(&device_path).unwrap_or(false);
-        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
-        brick_devices.push(Device {
-            is_block_device: is_block_device,
-            // All devices start at initialized is false
-            initialized: initialized,
-            dev_path: device_path.clone(),
-            mount_path: mount_path,
-        });
-    }
-    log!("Gathering list of juju storage brick devices");
-    //Get juju storage devices
-    for brick in juju::storage_list().unwrap_or("".to_string()).lines() {
-        // This is the /dev/ location.
-        let storage_location = juju::storage_get(brick.trim()).unwrap();
-        // Translate to mount location
-        let device_path = PathBuf::from(storage_location.trim());
-        let brick_filename = match device_path.file_name() {
-            Some(name) => name,
-            None => {
-                log!(format!("Unable to determine filename for device: {:?}. Skipping",
-                             brick),
-                     Error);
-                continue;
-            }
-        };
-        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
-        log!(format!("Checking if {:?} is initialized", &device_path));
-        let initialized = device_initialized(&device_path).unwrap_or(false);
+    let manual_brick_devices = block::get_manual_bricks().map_err(|e| Status::InvalidConfig(e))?;
+    brick_devices.extend(manual_brick_devices);
 
-        brick_devices.push(Device {
-            is_block_device: true,
-            initialized: initialized,
-            dev_path: device_path.clone(),
-            mount_path: mount_path,
-        });
-    }
+    // Get the juju storage block devices
+    let juju_config_brick_devices = block::get_juju_bricks().map_err(|e| Status::InvalidConfig(e))?;
+    brick_devices.extend(juju_config_brick_devices);
+
     log!(format!("storage devices: {:?}", brick_devices));
 
     // Format all drives in parallel
-    crossbeam::scope(|scope| for device in &mut brick_devices {
-        match device.initialized {
-            false => {
-                log!(format!("Calling initialize_storage for {:?}", device.dev_path));
-                scope.spawn(move || match initialize_storage(&device.dev_path) {
-                    Ok(_) => {
-                        log!(format!("{:?} is initialized", &device.dev_path));
-                        device.initialized = true;
-                    }
-                    Err(e) => {
-                        log!(format!("Failed to initialize device: {:?}. Error: {}",
-                                     &device.dev_path,
-                                     e),
-                             Error);
-                    }
-                });
-            }
-            true => {
-                log!(format!("{:?} is already initialized", &device.dev_path));
-            }
+    let mut core = Core::new().unwrap();
+
+    let mut future_handles: Vec<OutputAsync> = Vec::new();
+    for mut device in &mut brick_devices {
+        if device.initialized == false {
+            log!(format!("Calling initialize_storage for {:?}", device.dev_path));
+            future_handles.push(initialize_storage(&mut device, &core)
+                .map_err(|e| Status::FailedToCreate(e))?);
         }
-    });
+    }
+    for handle in future_handles {
+        let output = core.run(handle).unwrap();
+        log!(format!("future output: {:?}", output));
+        //finish_initialization(device_path: &PathBuf);
+    }
 
     let brick_paths: Vec<String> = brick_devices.iter()
         // Only operate on initialized devices

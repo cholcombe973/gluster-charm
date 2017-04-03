@@ -1,9 +1,15 @@
+extern crate futures;
 extern crate juju;
 extern crate libudev;
 extern crate regex;
+extern crate tokio_core;
+extern crate tokio_process;
 
 use self::regex::Regex;
+use self::tokio_core::reactor::Core;
+use self::tokio_process::{CommandExt, OutputAsync};
 use super::apt::apt_install;
+use super::{device_initialized, get_config_value};
 use uuid::Uuid;
 
 use std::ffi::OsStr;
@@ -31,6 +37,14 @@ pub struct Device {
     pub media_type: MediaType,
     pub capacity: u64,
     pub fs_type: FilesystemType,
+}
+
+#[derive(Debug)]
+pub struct BrickDevice {
+    pub is_block_device: bool,
+    pub initialized: bool,
+    pub mount_path: String,
+    pub dev_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -161,22 +175,6 @@ pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
             arg_list.push(format!("/dev/{}", device.name));
         }
     };
-    // arg_list.push("-t".to_string());
-    // match device.fs_type{
-    // FilesystemType::Btrfs => {
-    // arg_list.push("btrfs".to_string());
-    // },
-    // FilesystemType::Ext4 => {
-    // arg_list.push("ext4".to_string());
-    // },
-    // FilesystemType::Xfs => {
-    // arg_list.push("xfs".to_string());
-    // },
-    // FilesystemType::Unknown => {
-    // return Err("Unable to mount unknown filesystem type".to_string());
-    // }
-    // };
-    //
     arg_list.push(mount_point.to_string());
 
     return process_output(run_command("mount", &arg_list));
@@ -193,7 +191,10 @@ fn process_output(output: Output) -> Result<i32, String> {
     }
 }
 
-pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<i32, String> {
+pub fn format_block_device(device: &PathBuf,
+                           filesystem: &Filesystem,
+                           tokio_core: &Core)
+                           -> Result<OutputAsync, String> {
     match filesystem {
         &Filesystem::Btrfs { ref metadata_profile, ref leaf_size, ref node_size } => {
             let arg_list: Vec<String> = vec!["-m".to_string(),
@@ -208,7 +209,9 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
                 log!("Installing btrfs utils");
                 apt_install(vec!["btrfs-tools"])?;
             }
-            return process_output(run_command("mkfs.btrfs", &arg_list));
+            return Ok(Command::new("mkfs.btrfs")
+                          .args(&arg_list)
+                          .output_async(&tokio_core.handle()));
         }
         &Filesystem::Xfs { ref inode_size, ref force } => {
             let mut arg_list: Vec<String> = Vec::new();
@@ -229,10 +232,11 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
                 log!("Installing xfs utils");
                 apt_install(vec!["xfsprogs"])?;
             }
-            return process_output(run_command("/sbin/mkfs.xfs", &arg_list));
+            return Ok(Command::new("/sbin/mkfs.xfs")
+                          .args(&arg_list)
+                          .output_async(&tokio_core.handle()));
         }
         &Filesystem::Zfs { ref block_size, ref compression } => {
-            //let mut arg_list: Vec<String>; = Vec::new();
             // Check if zfs is installed
             if !Path::new("/sbin/zfs").exists() {
                 log!("Installing zfs utils");
@@ -249,26 +253,39 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
                                                              name.to_string_lossy().into_owned()),
                                                      name.to_string_lossy().into_owned(),
                                                      device.to_string_lossy().into_owned()];
-                    process_output(run_command("/sbin/zpool", &arg_list))?;
-
+                    let zpool_create = Command::new("/sbin/zpool")
+                        .args(&arg_list)
+                        .output_async(&tokio_core.handle());
+                    /*
                     if block_size.is_some() {
-                        process_output(run_command("/sbin/zfs",
-                                                   &vec!["set".to_string(),
-                                                         format!("recordsize={}",
-                                                                 block_size.unwrap()),
-                                                         name.to_string_lossy().into_owned()]))?;
+                        // If zpool creation is successful then we set these
+                        zpool_create.and_then(|_| {
+                            let set = Command::new("/sbin/zfs")
+                                .args(&vec!["set".to_string(),
+                                            format!("recordsize={}", block_size.unwrap()),
+                                            name.to_string_lossy().into_owned()])
+                                .output_async(&tokio_core.handle());
+                            set
+                        });
                     }
                     if compression.is_some() {
-                        process_output(run_command("/sbin/zfs",
-                                                   &vec!["set".to_string(),
-                                                         "compression=on".to_string(),
-                                                         name.to_string_lossy().into_owned()]))?;
+                        zpool_create.and_then(|_| {
+                            Command::new("/sbin/zfs")
+                                .args(&vec!["set".to_string(),
+                                            "compression=on".to_string(),
+                                            name.to_string_lossy().into_owned()])
+                                .output_async(&tokio_core.handle())
+                        });
                     }
-                    process_output(run_command("/sbin/zfs",
-                                               &vec!["set".to_string(),
-                                                     "acltype=posixacl".to_string(),
-                                                     name.to_string_lossy().into_owned()]))?;
-                    Ok(0)
+                    zpool_create.and_then(|_| {
+                        Command::new("/sbin/zfs")
+                            .args(&vec!["set".to_string(),
+                                        "acltype=posixacl".to_string(),
+                                        name.to_string_lossy().into_owned()])
+                            .output_async(&tokio_core.handle())
+                    });
+                    */
+                    return Ok(zpool_create);
                 }
                 None => Err(format!("Unable to determine filename for device: {:?}", device)),
             }
@@ -280,7 +297,7 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
                                              reserved_blocks_percentage.to_string(),
                                              device.to_string_lossy().to_string()];
 
-            return process_output(run_command("mkfs.ext4", &arg_list));
+            return Ok(Command::new("mkfs.ext4").args(&arg_list).output_async(&tokio_core.handle()));
         }
     }
 }
@@ -295,7 +312,10 @@ fn get_size(device: &libudev::Device) -> Option<u64> {
     match device.attribute_value("size") {
         // 512 is the block size
         Some(size_str) => {
-            let size = size_str.to_str().unwrap_or("0").parse::<u64>().unwrap_or(0);
+            let size = size_str.to_str()
+                .unwrap_or("0")
+                .parse::<u64>()
+                .unwrap_or(0);
             return Some(size * 512);
         }
         None => return None,
@@ -392,14 +412,77 @@ pub fn get_device_info(device_path: &PathBuf) -> Result<Device, String> {
                 let fs_type = get_fs_type(&device);
 
                 return Ok(Device {
-                    id: id,
-                    name: sysname.to_string_lossy().to_string(),
-                    media_type: media_type,
-                    capacity: capacity,
-                    fs_type: fs_type,
-                });
+                              id: id,
+                              name: sysname.to_string_lossy().to_string(),
+                              media_type: media_type,
+                              capacity: capacity,
+                              fs_type: fs_type,
+                          });
             }
         }
     }
     return Err(format!("Unable to find device with name {:?}", device_path));
+}
+
+fn scan_devices(devices: Vec<String>) -> Result<Vec<BrickDevice>, String> {
+    let mut brick_devices: Vec<BrickDevice> = Vec::new();
+    for brick in devices {
+        let device_path = PathBuf::from(brick);
+        // Translate to mount location
+        let brick_filename = match device_path.file_name() {
+            Some(name) => name,
+            None => {
+                log!(format!("Unable to determine filename for device: {:?}. Skipping",
+                             device_path),
+                     Error);
+                continue;
+            }
+        };
+        log!(format!("Checking if {:?} is a block device", &device_path));
+        let is_block_device = is_block_device(&device_path).unwrap_or(false);
+        if !is_block_device {
+            log!(format!("Skipping invalid block device: {:?}", &device_path));
+            continue;
+        }
+        log!(format!("Checking if {:?} is initialized", &device_path));
+        let initialized = device_initialized(&device_path).unwrap_or(false);
+        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
+        brick_devices.push(BrickDevice {
+                               is_block_device: is_block_device,
+                               // All devices start at initialized is false
+                               initialized: initialized,
+                               dev_path: device_path.clone(),
+                               mount_path: mount_path,
+                           });
+    }
+    Ok(brick_devices)
+}
+
+pub fn get_manual_bricks() -> Result<Vec<BrickDevice>, String> {
+    log!("Gathering list of manually specified brick devices");
+    let manual_config_brick_devices: Vec<String> = get_config_value("brick_devices")
+        .unwrap_or("".to_string())
+        .split(" ")
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    log!(format!("List of manual storage brick devices: {:?}",
+                 manual_config_brick_devices));
+    let bricks = scan_devices(manual_config_brick_devices)?;
+    Ok(bricks)
+}
+
+pub fn get_juju_bricks() -> Result<Vec<BrickDevice>, String> {
+    log!("Gathering list of juju storage brick devices");
+    //Get juju storage devices
+    let juju_config_brick_devices: Vec<String> = juju::storage_list()
+        .unwrap_or("".to_string())
+        .lines()
+        .filter(|s| !s.is_empty())
+        .map(|s| juju::storage_get(s).unwrap())
+        .collect();
+    log!(format!("List of juju storage brick devices: {:?}",
+                 juju_config_brick_devices));
+    let bricks = scan_devices(juju_config_brick_devices)?;
+    Ok(bricks)
 }

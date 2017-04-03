@@ -9,6 +9,7 @@ mod updatedb;
 mod upgrade;
 
 extern crate debian;
+extern crate futures;
 extern crate gluster;
 extern crate ipnetwork;
 extern crate itertools;
@@ -16,6 +17,8 @@ extern crate itertools;
 extern crate juju;
 extern crate resolve;
 extern crate serde_yaml;
+extern crate tokio_core;
+extern crate tokio_process;
 extern crate uuid;
 
 use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
@@ -27,12 +30,14 @@ use hooks::nfs_relation_joined::nfs_relation_joined;
 use hooks::server_changed::server_changed;
 use hooks::server_removed::server_removed;
 use metrics::collect_metrics;
+use tokio_core::reactor::Core;
+use tokio_process::OutputAsync;
 
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::fs::create_dir;
-use std::io::Write;
+use std::io::{Error, ErrorKind, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -197,8 +202,7 @@ fn create_sysctl<T: Write>(sysctl: String, f: &mut T) -> Result<usize, String> {
 fn get_cluster_networks() -> Result<Vec<ctdb::VirtualIp>, String> {
     let mut cluster_networks: Vec<ctdb::VirtualIp> = Vec::new();
     let config_value = juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?;
-    let virtual_ips: Vec<&str> = config_value.split(" ")
-        .collect();
+    let virtual_ips: Vec<&str> = config_value.split(" ").collect();
     for vip in virtual_ips {
         if vip.is_empty() {
             continue;
@@ -207,9 +211,9 @@ fn get_cluster_networks() -> Result<Vec<ctdb::VirtualIp>, String> {
         let interface = ctdb::get_interface_for_address(network)
             .ok_or(format!("Failed to find interface for network {:?}", network))?;
         cluster_networks.push(ctdb::VirtualIp {
-            cidr: network,
-            interface: interface,
-        });
+                                  cidr: network,
+                                  interface: interface,
+                              });
     }
     Ok(cluster_networks)
 }
@@ -352,13 +356,57 @@ fn device_initialized(brick_path: &PathBuf) -> Result<bool, JujuError> {
     Ok(unit_info.unwrap_or(false))
 }
 
-// Format and mount block devices to ready them for consumption by Gluster
-fn initialize_storage(device_path: &PathBuf) -> Result<(), String> {
-    let unit_storage = unitdata::Storage::new(None).map_err(|e| e.to_string())?;
-    let filesystem_config_value = get_config_value("filesystem_type")?;
+fn finish_initialization(device_path: &PathBuf) -> Result<(), Error> {
+    let filesystem_config_value =
+        get_config_value("filesystem_type").map_err(|e| Error::new(ErrorKind::Other, e))?;
     let filesystem_type = block::FilesystemType::from_str(&filesystem_config_value);
     let mount_path = format!("/mnt/{}",
                              device_path.file_name().unwrap().to_string_lossy());
+
+    let unit_storage = unitdata::Storage::new(None).map_err(|e| Error::new(ErrorKind::Other, e))?;
+    let device_info =
+        block::get_device_info(device_path).map_err(|e| Error::new(ErrorKind::Other, e))?;
+    log!(format!("device_info: {:?}", device_info), Info);
+
+    //Zfs automatically handles mounting the device
+    if filesystem_type != block::FilesystemType::Zfs {
+        log!(format!("Mounting block device {:?} at {}", &device_path, mount_path),
+             Info);
+        status_set!(Maintenance
+            format!("Mounting block device {:?} at {}", &device_path, mount_path));
+
+        if !Path::new(&mount_path).exists() {
+            log!(format!("Creating mount directory: {}", &mount_path), Info);
+            create_dir(&mount_path)?;
+        }
+
+        block::mount_device(&device_info, &mount_path)
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+    } else if filesystem_type == block::FilesystemType::Zfs {
+        /*
+        Command::new("/sbin/zfs")
+            .args(&vec!["set".to_string(),
+                        "acltype=posixacl".to_string(),
+                        name.to_string_lossy().into_owned()])
+            .output_async(&tokio_core.handle())
+            */
+    }
+    unit_storage.set(&device_path.to_string_lossy(), true)
+        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+    log!(format!("Removing mount path from updatedb {:?}", mount_path),
+         Info);
+    updatedb::add_to_prunepath(&mount_path, &Path::new("/etc/updatedb.conf"))?;
+    Ok(())
+}
+
+// Format and mount block devices to ready them for consumption by Gluster
+fn initialize_storage(device: &mut block::BrickDevice,
+                      tokio_core: &Core)
+                      -> Result<OutputAsync, String> {
+    let filesystem_config_value = get_config_value("filesystem_type")?;
+    let filesystem_type = block::FilesystemType::from_str(&filesystem_config_value);
+    let ref device_path = device.dev_path;
+    let command: OutputAsync;
 
     // Format with the default XFS unless told otherwise
     match filesystem_type {
@@ -372,7 +420,7 @@ fn initialize_storage(device_path: &PathBuf) -> Result<(), String> {
                 inode_size: None,
                 force: true,
             };
-            block::format_block_device(device_path, &filesystem_type)?;
+            command = block::format_block_device(&device_path, &filesystem_type, &tokio_core)?;
         }
         block::FilesystemType::Ext4 => {
             log!(format!("Formatting block device with Ext4: {:?}", &device_path),
@@ -384,7 +432,8 @@ fn initialize_storage(device_path: &PathBuf) -> Result<(), String> {
                 inode_size: 0,
                 reserved_blocks_percentage: 0,
             };
-            block::format_block_device(device_path, &filesystem_type).map_err(|e| e.to_string())?;
+            command = block::format_block_device(&device_path,
+                &filesystem_type, &tokio_core).map_err(|e| e.to_string())?;
         }
         block::FilesystemType::Btrfs => {
             log!(format!("Formatting block device with Btrfs: {:?}", &device_path),
@@ -397,7 +446,8 @@ fn initialize_storage(device_path: &PathBuf) -> Result<(), String> {
                 node_size: 0,
                 metadata_profile: block::MetadataProfile::Single,
             };
-            block::format_block_device(device_path, &filesystem_type).map_err(|e| e.to_string())?;
+            command = block::format_block_device(&device_path,
+                &filesystem_type, &tokio_core).map_err(|e| e.to_string())?;
         }
         block::FilesystemType::Zfs => {
             log!(format!("Formatting block device with ZFS: {:?}", &device_path),
@@ -408,9 +458,8 @@ fn initialize_storage(device_path: &PathBuf) -> Result<(), String> {
                 compression: None,
                 block_size: None,
             };
-            block::format_block_device(device_path, &filesystem_type).map_err(|e| e.to_string())?;
-            // ZFS mounts the filesystem for us
-            return Ok(());
+            command = block::format_block_device(&device_path,
+                &filesystem_type, &tokio_core).map_err(|e| e.to_string())?;
         }
         _ => {
             log!(format!("Formatting block device with XFS: {:?}", &device_path),
@@ -422,29 +471,11 @@ fn initialize_storage(device_path: &PathBuf) -> Result<(), String> {
                 inode_size: None,
                 force: true,
             };
-            block::format_block_device(&device_path, &filesystem_type).map_err(|e| e.to_string())?;
+            command = block::format_block_device(&device_path,
+                &filesystem_type, &tokio_core).map_err(|e| e.to_string())?;
         }
     }
-    // Update our block device info to reflect formatting
-    let device_info = block::get_device_info(&device_path)?;
-    log!(format!("device_info: {:?}", device_info), Info);
-
-    log!(format!("Mounting block device {:?} at {}", &device_path, mount_path),
-         Info);
-    status_set!(Maintenance format!("Mounting block device {:?} at {}", &device_path, mount_path));
-
-    if !Path::new(&mount_path).exists() {
-        create_dir(&mount_path).map_err(|e| e.to_string())?;
-    }
-
-    block::mount_device(&device_info, &mount_path)?;
-
-    log!(format!("Removing mount path from updatedb {:?}", mount_path),
-         Info);
-    unit_storage.set(&device_path.to_string_lossy(), true).map_err(|e| e.to_string())?;
-    updatedb::add_to_prunepath(&mount_path, &Path::new("/etc/updatedb.conf"))
-        .map_err(|e| e.to_string())?;
-    return Ok(());
+    return Ok(command);
 }
 
 fn resolve_first_vip_to_dns() -> Result<String, String> {

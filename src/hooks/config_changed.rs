@@ -29,50 +29,20 @@ fn check_for_new_devices() -> Result<(), String> {
     let config = juju::Config::new().map_err(|e| e.to_string())?;
     if config.changed("brick_devices").map_err(|e| e.to_string())? {
         // Get the changed list of brick devices and initialize each one
-        let brick_paths: Vec<PathBuf> = get_config_value("brick_devices")
-            .unwrap_or("".to_string())
-            .split(" ")
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty())
-            .map(|s| PathBuf::from(s))
-            .collect();
-        // Check for any devices that are mounted and skip those.  They're already taken care of
-        for brick in brick_paths {
-            if block::is_block_device(&brick).is_err() {
-                log!(format!("{:?} is not a block device. Skipping.", brick));
-                continue;
-            }
-            // If ephemeral-unmount is set and the directory is mounted we unmount it.
-            // Otherwise nothing happens
-            ephemeral_unmount()?; // TODO: Should this fail the hook or just skip?
+        let mut brick_devices: Vec<block::BrickDevice> = Vec::new();
 
-            let brick_filename = match brick.file_name() {
-                Some(name) => name,
-                None => {
-                    log!(format!("Unable to determine filename for device: {:?}. Skipping",
-                                 brick),
-                         Error);
-                    continue;
-                }
-            };
-            let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
-            log!(format!("Checking if {:?} is mounted", mount_path));
-            if Path::new(&mount_path).exists() {
-                match is_mounted(&mount_path) {
-                    Ok(mounted) => {
-                        if mounted {
-                            log!(format!("{:?} is mounted. Skipping", brick), Error);
-                            continue;
-                        }
-                    }
-                    Err(_) => {}
-                };
-            }
-            if !device_initialized(&brick).map_err(|e| e.to_string())? {
-                log!(format!("Calling initialize_storage for {:?}", brick));
-                initialize_storage(&brick)?;
-            }
-        }
+        log!("Checking for ephemeral unmount");
+        ephemeral_unmount()?;
+
+        // Get user configured storage devices
+        let manual_brick_devices = block::get_manual_bricks()?;
+        brick_devices.extend(manual_brick_devices);
+
+        // Get the juju storage block devices
+        let juju_config_brick_devices = block::get_juju_bricks()?;
+        brick_devices.extend(juju_config_brick_devices);
+
+        log!(format!("storage devices: {:?}", brick_devices));
     } else {
         log!("No new devices found");
     }
