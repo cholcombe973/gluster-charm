@@ -9,7 +9,6 @@ mod updatedb;
 mod upgrade;
 
 extern crate debian;
-extern crate futures;
 extern crate gluster;
 extern crate ipnetwork;
 extern crate itertools;
@@ -17,8 +16,6 @@ extern crate itertools;
 extern crate juju;
 extern crate resolve;
 extern crate serde_yaml;
-extern crate tokio_core;
-extern crate tokio_process;
 extern crate uuid;
 
 use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
@@ -30,8 +27,6 @@ use hooks::nfs_relation_joined::nfs_relation_joined;
 use hooks::server_changed::server_changed;
 use hooks::server_removed::server_removed;
 use metrics::collect_metrics;
-use tokio_core::reactor::Core;
-use tokio_process::OutputAsync;
 
 use std::collections::BTreeMap;
 use std::env;
@@ -175,6 +170,8 @@ enum Status {
     FailedToCreate(String),
     FailedToStart(String),
 }
+
+
 
 fn get_config_value(name: &str) -> Result<String, String> {
     match juju::config_get(&name.to_string()) {
@@ -382,100 +379,87 @@ fn finish_initialization(device_path: &PathBuf) -> Result<(), Error> {
 
         block::mount_device(&device_info, &mount_path)
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
-    } else if filesystem_type == block::FilesystemType::Zfs {
-        /*
-        Command::new("/sbin/zfs")
-            .args(&vec!["set".to_string(),
-                        "acltype=posixacl".to_string(),
-                        name.to_string_lossy().into_owned()])
-            .output_async(&tokio_core.handle())
-            */
     }
     unit_storage.set(&device_path.to_string_lossy(), true)
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
     log!(format!("Removing mount path from updatedb {:?}", mount_path),
          Info);
     updatedb::add_to_prunepath(&mount_path, &Path::new("/etc/updatedb.conf"))?;
+    // TODO Add block device UUID to /etc/fstab
     Ok(())
 }
 
 // Format and mount block devices to ready them for consumption by Gluster
-fn initialize_storage(device: &mut block::BrickDevice,
-                      tokio_core: &Core)
-                      -> Result<OutputAsync, String> {
+// Return an Initialization struct
+fn initialize_storage(device: block::BrickDevice) -> Result<block::AsyncInit, String> {
     let filesystem_config_value = get_config_value("filesystem_type")?;
     let filesystem_type = block::FilesystemType::from_str(&filesystem_config_value);
-    let ref device_path = device.dev_path;
-    let command: OutputAsync;
+    let init: block::AsyncInit;
 
     // Format with the default XFS unless told otherwise
     match filesystem_type {
         block::FilesystemType::Xfs => {
-            log!(format!("Formatting block device with XFS: {:?}", &device_path),
+            log!(format!("Formatting block device with XFS: {:?}", &device.dev_path),
                  Info);
             status_set!(Maintenance
-                format!("Formatting block device with XFS: {:?}", &device_path));
+                format!("Formatting block device with XFS: {:?}", &device.dev_path));
 
             let filesystem_type = block::Filesystem::Xfs {
                 inode_size: None,
                 force: true,
             };
-            command = block::format_block_device(&device_path, &filesystem_type, &tokio_core)?;
+            init = block::format_block_device(device, &filesystem_type)?;
         }
         block::FilesystemType::Ext4 => {
-            log!(format!("Formatting block device with Ext4: {:?}", &device_path),
+            log!(format!("Formatting block device with Ext4: {:?}", &device.dev_path),
                  Info);
             status_set!(Maintenance
-                format!("Formatting block device with Ext4: {:?}", &device_path));
+                format!("Formatting block device with Ext4: {:?}", &device.dev_path));
 
             let filesystem_type = block::Filesystem::Ext4 {
                 inode_size: 0,
                 reserved_blocks_percentage: 0,
             };
-            command = block::format_block_device(&device_path,
-                &filesystem_type, &tokio_core).map_err(|e| e.to_string())?;
+            init = block::format_block_device(device, &filesystem_type)?;
         }
         block::FilesystemType::Btrfs => {
-            log!(format!("Formatting block device with Btrfs: {:?}", &device_path),
+            log!(format!("Formatting block device with Btrfs: {:?}", &device.dev_path),
                  Info);
             status_set!(Maintenance
-                format!("Formatting block device with Btrfs: {:?}", &device_path));
+                format!("Formatting block device with Btrfs: {:?}", &device.dev_path));
 
             let filesystem_type = block::Filesystem::Btrfs {
                 leaf_size: 0,
                 node_size: 0,
                 metadata_profile: block::MetadataProfile::Single,
             };
-            command = block::format_block_device(&device_path,
-                &filesystem_type, &tokio_core).map_err(|e| e.to_string())?;
+            init = block::format_block_device(device, &filesystem_type)?;
         }
         block::FilesystemType::Zfs => {
-            log!(format!("Formatting block device with ZFS: {:?}", &device_path),
+            log!(format!("Formatting block device with ZFS: {:?}", &device.dev_path),
                  Info);
             status_set!(Maintenance
-                format!("Formatting block device with ZFS: {:?}", &device_path));
+                format!("Formatting block device with ZFS: {:?}", &device.dev_path));
             let filesystem_type = block::Filesystem::Zfs {
                 compression: None,
                 block_size: None,
             };
-            command = block::format_block_device(&device_path,
-                &filesystem_type, &tokio_core).map_err(|e| e.to_string())?;
+            init = block::format_block_device(device, &filesystem_type)?;
         }
         _ => {
-            log!(format!("Formatting block device with XFS: {:?}", &device_path),
+            log!(format!("Formatting block device with XFS: {:?}", &device.dev_path),
                  Info);
             status_set!(Maintenance
-                format!("Formatting block device with XFS: {:?}", &device_path));
+                format!("Formatting block device with XFS: {:?}", &device.dev_path));
 
             let filesystem_type = block::Filesystem::Xfs {
                 inode_size: None,
                 force: true,
             };
-            command = block::format_block_device(&device_path,
-                &filesystem_type, &tokio_core).map_err(|e| e.to_string())?;
+            init = block::format_block_device(device, &filesystem_type)?;
         }
     }
-    return Ok(command);
+    return Ok(init);
 }
 
 fn resolve_first_vip_to_dns() -> Result<String, String> {

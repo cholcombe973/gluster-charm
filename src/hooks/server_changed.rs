@@ -1,8 +1,5 @@
-extern crate crossbeam;
 extern crate gluster;
 extern crate juju;
-extern crate tokio_core;
-extern crate tokio_process;
 
 use std::io::Read;
 use std::net::IpAddr;
@@ -11,15 +8,13 @@ use std::str::FromStr;
 use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
 use gluster::peer::{peer_list, Peer};
 use gluster::volume::*;
-use self::tokio_core::reactor::Core;
-use self::tokio_process::OutputAsync;
 use super::super::apt;
 use super::super::block;
 use super::super::ctdb;
 use super::super::samba::setup_samba;
 use super::super::{brick_and_server_cartesian_product, ephemeral_unmount, find_new_peers,
-                   get_cluster_networks, get_config_value, initialize_storage, mount_cluster,
-                   probe_in_units, Status, wait_for_peers};
+                   finish_initialization, get_cluster_networks, get_config_value,
+                   initialize_storage, mount_cluster, probe_in_units, Status, wait_for_peers};
 
 use std::fs::File;
 
@@ -320,29 +315,53 @@ fn get_brick_list(peers: &Vec<Peer>,
 
     log!(format!("storage devices: {:?}", brick_devices));
 
+    let mut format_handles: Vec<block::AsyncInit> = Vec::new();
+    let mut brick_paths: Vec<String> = Vec::new();
     // Format all drives in parallel
-    let mut core = Core::new().unwrap();
-
-    let mut future_handles: Vec<OutputAsync> = Vec::new();
-    for mut device in &mut brick_devices {
-        if device.initialized == false {
+    for device in &mut brick_devices {
+        if !device.initialized {
             log!(format!("Calling initialize_storage for {:?}", device.dev_path));
-            future_handles.push(initialize_storage(&mut device, &core)
-                .map_err(|e| Status::FailedToCreate(e))?);
+            // Spawn all format commands in the background
+            format_handles.push(
+                initialize_storage(device.clone()).map_err(|e| Status::FailedToCreate(e))?);
+        } else {
+            // The device is already initialized, lets add it to our usable paths list
+            log!(format!("{:?} is already initialized", device.dev_path));
+            brick_paths.push(device.mount_path.clone());
         }
     }
-    for handle in future_handles {
-        let output = core.run(handle).unwrap();
-        log!(format!("future output: {:?}", output));
-        //finish_initialization(device_path: &PathBuf);
-    }
+    // Wait for all children to finish formatting their drives
+    for handle in format_handles {
+        let output_result = handle.format_child.wait_with_output();
+        match output_result {
+            Ok(output) => {
+                match block::process_output(output) {
+                    Ok(_) => {
+                        // success
+                        // 1. Run any post setup commands if needed
+                        finish_initialization(&handle.device.dev_path)
+                            .map_err(|e| Status::FailedToCreate(e.to_string()))?;
+                        brick_paths.push(handle.device.mount_path.clone());
+                    }
+                    Err(e) => {
+                        // Failed
+                        log!(format!("Device {:?} formatting failed with error: {}. Skipping",
+                                     &handle.device.dev_path,
+                                     e),
+                             Error);
+                    }
+                }
+            }
+            Err(e) => {
+                //Failed
+                log!(format!("Device {:?} formatting failed with error: {}. Skipping",
+                             &handle.device.dev_path,
+                             e),
+                     Error);
+            }
+        }
 
-    let brick_paths: Vec<String> = brick_devices.iter()
-        // Only operate on initialized devices
-        .filter(|device| device.initialized)
-        // Find their mount path
-        .map(|device| device.mount_path.clone())
-        .collect();
+    }
     log!(format!("Usable brick paths: {:?}", brick_paths));
 
     if volume.is_none() {

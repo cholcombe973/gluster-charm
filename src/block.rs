@@ -1,20 +1,15 @@
-extern crate futures;
 extern crate juju;
 extern crate libudev;
 extern crate regex;
-extern crate tokio_core;
-extern crate tokio_process;
 
 use self::regex::Regex;
-use self::tokio_core::reactor::Core;
-use self::tokio_process::{CommandExt, OutputAsync};
 use super::apt::apt_install;
 use super::{device_initialized, get_config_value};
 use uuid::Uuid;
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output};
 
 // Formats a block device at Path p with XFS
 #[derive(Clone, Debug)]
@@ -39,12 +34,24 @@ pub struct Device {
     pub fs_type: FilesystemType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BrickDevice {
     pub is_block_device: bool,
     pub initialized: bool,
     pub mount_path: String,
     pub dev_path: PathBuf,
+}
+
+#[derive(Debug)]
+pub struct AsyncInit {
+    /// The child process needed for this device initialization
+    /// This will be an async spawned Child handle
+    pub format_child: Child,
+    /// After formatting is complete run these commands to setup the filesystem
+    /// ZFS needs this.  These should prob be run in sync mode
+    pub post_setup_commands: Vec<(String, Vec<String>)>,
+    /// The device we're initializing
+    pub device: BrickDevice,
 }
 
 #[derive(Debug)]
@@ -180,7 +187,7 @@ pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
     return process_output(run_command("mount", &arg_list));
 }
 
-fn process_output(output: Output) -> Result<i32, String> {
+pub fn process_output(output: Output) -> Result<i32, String> {
     log!(format!("Command output: {:?}", output));
 
     if output.status.success() {
@@ -191,10 +198,10 @@ fn process_output(output: Output) -> Result<i32, String> {
     }
 }
 
-pub fn format_block_device(device: &PathBuf,
-                           filesystem: &Filesystem,
-                           tokio_core: &Core)
-                           -> Result<OutputAsync, String> {
+pub fn format_block_device(brick_device: BrickDevice,
+                           filesystem: &Filesystem)
+                           -> Result<AsyncInit, String> {
+    let device = brick_device.dev_path.clone();
     match filesystem {
         &Filesystem::Btrfs { ref metadata_profile, ref leaf_size, ref node_size } => {
             let arg_list: Vec<String> = vec!["-m".to_string(),
@@ -209,9 +216,13 @@ pub fn format_block_device(device: &PathBuf,
                 log!("Installing btrfs utils");
                 apt_install(vec!["btrfs-tools"])?;
             }
-            return Ok(Command::new("mkfs.btrfs")
-                          .args(&arg_list)
-                          .output_async(&tokio_core.handle()));
+            return Ok(AsyncInit {
+                          format_child: Command::new("mkfs.btrfs").args(&arg_list)
+                              .spawn()
+                              .map_err(|e| e.to_string())?,
+                          post_setup_commands: vec![],
+                          device: brick_device,
+                      });
         }
         &Filesystem::Xfs { ref inode_size, ref force } => {
             let mut arg_list: Vec<String> = Vec::new();
@@ -232,9 +243,14 @@ pub fn format_block_device(device: &PathBuf,
                 log!("Installing xfs utils");
                 apt_install(vec!["xfsprogs"])?;
             }
-            return Ok(Command::new("/sbin/mkfs.xfs")
-                          .args(&arg_list)
-                          .output_async(&tokio_core.handle()));
+            let format_handle = Command::new("/sbin/mkfs.xfs").args(&arg_list)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+            return Ok(AsyncInit {
+                          format_child: format_handle,
+                          post_setup_commands: vec![],
+                          device: brick_device,
+                      });
         }
         &Filesystem::Zfs { ref block_size, ref compression } => {
             // Check if zfs is installed
@@ -246,6 +262,7 @@ pub fn format_block_device(device: &PathBuf,
             match base_name {
                 Some(name) => {
                     //Mount at /mnt/{dev_name}
+                    let mut post_setup_commands: Vec<(String, Vec<String>)> = Vec::new();
                     let arg_list: Vec<String> = vec!["create".to_string(),
                                                      "-f".to_string(),
                                                      "-m".to_string(),
@@ -253,39 +270,33 @@ pub fn format_block_device(device: &PathBuf,
                                                              name.to_string_lossy().into_owned()),
                                                      name.to_string_lossy().into_owned(),
                                                      device.to_string_lossy().into_owned()];
-                    let zpool_create = Command::new("/sbin/zpool")
-                        .args(&arg_list)
-                        .output_async(&tokio_core.handle());
-                    /*
+                    let zpool_create = Command::new("/sbin/zpool").args(&arg_list)
+                        .spawn()
+                        .map_err(|e| e.to_string())?;
+
                     if block_size.is_some() {
                         // If zpool creation is successful then we set these
-                        zpool_create.and_then(|_| {
-                            let set = Command::new("/sbin/zfs")
-                                .args(&vec!["set".to_string(),
-                                            format!("recordsize={}", block_size.unwrap()),
-                                            name.to_string_lossy().into_owned()])
-                                .output_async(&tokio_core.handle());
-                            set
-                        });
+                        post_setup_commands.push(("/sbin/zfs".to_string(),
+                                                  vec!["set".to_string(),
+                                                       format!("recordsize={}",
+                                                               block_size.unwrap()),
+                                                       name.to_string_lossy().into_owned()]));
                     }
                     if compression.is_some() {
-                        zpool_create.and_then(|_| {
-                            Command::new("/sbin/zfs")
-                                .args(&vec!["set".to_string(),
-                                            "compression=on".to_string(),
-                                            name.to_string_lossy().into_owned()])
-                                .output_async(&tokio_core.handle())
-                        });
+                        post_setup_commands.push(("/sbin/zfs".to_string(),
+                                                  vec!["set".to_string(),
+                                                       "compression=on".to_string(),
+                                                       name.to_string_lossy().into_owned()]));
                     }
-                    zpool_create.and_then(|_| {
-                        Command::new("/sbin/zfs")
-                            .args(&vec!["set".to_string(),
-                                        "acltype=posixacl".to_string(),
-                                        name.to_string_lossy().into_owned()])
-                            .output_async(&tokio_core.handle())
-                    });
-                    */
-                    return Ok(zpool_create);
+                    post_setup_commands.push(("/sbin/zfs".to_string(),
+                                              vec!["set".to_string(),
+                                                   "acltype=posixacl".to_string(),
+                                                   name.to_string_lossy().into_owned()]));
+                    return Ok(AsyncInit {
+                                  format_child: zpool_create,
+                                  post_setup_commands: post_setup_commands,
+                                  device: brick_device,
+                              });
                 }
                 None => Err(format!("Unable to determine filename for device: {:?}", device)),
             }
@@ -297,7 +308,13 @@ pub fn format_block_device(device: &PathBuf,
                                              reserved_blocks_percentage.to_string(),
                                              device.to_string_lossy().to_string()];
 
-            return Ok(Command::new("mkfs.ext4").args(&arg_list).output_async(&tokio_core.handle()));
+            return Ok(AsyncInit {
+                          format_child: Command::new("mkfs.ext4").args(&arg_list)
+                              .spawn()
+                              .map_err(|e| e.to_string())?,
+                          post_setup_commands: vec![],
+                          device: brick_device,
+                      });
         }
     }
 }
