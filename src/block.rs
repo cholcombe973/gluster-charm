@@ -4,11 +4,12 @@ extern crate regex;
 
 use self::regex::Regex;
 use super::apt::apt_install;
+use super::{device_initialized, get_config_value};
 use uuid::Uuid;
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output};
 
 // Formats a block device at Path p with XFS
 #[derive(Clone, Debug)]
@@ -33,6 +34,26 @@ pub struct Device {
     pub fs_type: FilesystemType,
 }
 
+#[derive(Debug, Clone)]
+pub struct BrickDevice {
+    pub is_block_device: bool,
+    pub initialized: bool,
+    pub mount_path: String,
+    pub dev_path: PathBuf,
+}
+
+#[derive(Debug)]
+pub struct AsyncInit {
+    /// The child process needed for this device initialization
+    /// This will be an async spawned Child handle
+    pub format_child: Child,
+    /// After formatting is complete run these commands to setup the filesystem
+    /// ZFS needs this.  These should prob be run in sync mode
+    pub post_setup_commands: Vec<(String, Vec<String>)>,
+    /// The device we're initializing
+    pub device: BrickDevice,
+}
+
 #[derive(Debug)]
 pub enum MediaType {
     SolidState,
@@ -44,6 +65,8 @@ pub enum MediaType {
 #[derive(Debug, Eq, PartialEq)]
 pub enum FilesystemType {
     Btrfs,
+    Ext2,
+    Ext3,
     Ext4,
     Xfs,
     Zfs,
@@ -54,10 +77,34 @@ impl FilesystemType {
     pub fn from_str(fs_type: &str) -> FilesystemType {
         match fs_type {
             "btrfs" => FilesystemType::Btrfs,
+            "ext2" => FilesystemType::Ext2,
+            "ext3" => FilesystemType::Ext3,
             "ext4" => FilesystemType::Ext4,
             "xfs" => FilesystemType::Xfs,
             "zfs" => FilesystemType::Zfs,
             _ => FilesystemType::Unknown,
+        }
+    }
+    pub fn to_str(&self) -> &str {
+        match self {
+            &FilesystemType::Btrfs => "btrfs",
+            &FilesystemType::Ext2 => "ext2",
+            &FilesystemType::Ext3 => "ext3",
+            &FilesystemType::Ext4 => "ext4",
+            &FilesystemType::Xfs => "xfs",
+            &FilesystemType::Zfs => "zfs",
+            &FilesystemType::Unknown => "unknown",
+        }
+    }
+    pub fn to_string(&self) -> String {
+        match self {
+            &FilesystemType::Btrfs => "btrfs".to_string(),
+            &FilesystemType::Ext2 => "ext2".to_string(),
+            &FilesystemType::Ext3 => "ext3".to_string(),
+            &FilesystemType::Ext4 => "ext4".to_string(),
+            &FilesystemType::Xfs => "xfs".to_string(),
+            &FilesystemType::Zfs => "zfs".to_string(),
+            &FilesystemType::Unknown => "unknown".to_string(),
         }
     }
 }
@@ -161,28 +208,12 @@ pub fn mount_device(device: &Device, mount_point: &str) -> Result<i32, String> {
             arg_list.push(format!("/dev/{}", device.name));
         }
     };
-    // arg_list.push("-t".to_string());
-    // match device.fs_type{
-    // FilesystemType::Btrfs => {
-    // arg_list.push("btrfs".to_string());
-    // },
-    // FilesystemType::Ext4 => {
-    // arg_list.push("ext4".to_string());
-    // },
-    // FilesystemType::Xfs => {
-    // arg_list.push("xfs".to_string());
-    // },
-    // FilesystemType::Unknown => {
-    // return Err("Unable to mount unknown filesystem type".to_string());
-    // }
-    // };
-    //
     arg_list.push(mount_point.to_string());
 
     return process_output(run_command("mount", &arg_list));
 }
 
-fn process_output(output: Output) -> Result<i32, String> {
+pub fn process_output(output: Output) -> Result<i32, String> {
     log!(format!("Command output: {:?}", output));
 
     if output.status.success() {
@@ -193,7 +224,10 @@ fn process_output(output: Output) -> Result<i32, String> {
     }
 }
 
-pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<i32, String> {
+pub fn format_block_device(brick_device: BrickDevice,
+                           filesystem: &Filesystem)
+                           -> Result<AsyncInit, String> {
+    let device = brick_device.dev_path.clone();
     match filesystem {
         &Filesystem::Btrfs { ref metadata_profile, ref leaf_size, ref node_size } => {
             let arg_list: Vec<String> = vec!["-m".to_string(),
@@ -208,7 +242,13 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
                 log!("Installing btrfs utils");
                 apt_install(vec!["btrfs-tools"])?;
             }
-            return process_output(run_command("mkfs.btrfs", &arg_list));
+            return Ok(AsyncInit {
+                          format_child: Command::new("mkfs.btrfs").args(&arg_list)
+                              .spawn()
+                              .map_err(|e| e.to_string())?,
+                          post_setup_commands: vec![],
+                          device: brick_device,
+                      });
         }
         &Filesystem::Xfs { ref inode_size, ref force } => {
             let mut arg_list: Vec<String> = Vec::new();
@@ -229,10 +269,16 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
                 log!("Installing xfs utils");
                 apt_install(vec!["xfsprogs"])?;
             }
-            return process_output(run_command("/sbin/mkfs.xfs", &arg_list));
+            let format_handle = Command::new("/sbin/mkfs.xfs").args(&arg_list)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+            return Ok(AsyncInit {
+                          format_child: format_handle,
+                          post_setup_commands: vec![],
+                          device: brick_device,
+                      });
         }
         &Filesystem::Zfs { ref block_size, ref compression } => {
-            //let mut arg_list: Vec<String>; = Vec::new();
             // Check if zfs is installed
             if !Path::new("/sbin/zfs").exists() {
                 log!("Installing zfs utils");
@@ -242,6 +288,7 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
             match base_name {
                 Some(name) => {
                     //Mount at /mnt/{dev_name}
+                    let mut post_setup_commands: Vec<(String, Vec<String>)> = Vec::new();
                     let arg_list: Vec<String> = vec!["create".to_string(),
                                                      "-f".to_string(),
                                                      "-m".to_string(),
@@ -249,26 +296,33 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
                                                              name.to_string_lossy().into_owned()),
                                                      name.to_string_lossy().into_owned(),
                                                      device.to_string_lossy().into_owned()];
-                    process_output(run_command("/sbin/zpool", &arg_list))?;
+                    let zpool_create = Command::new("/sbin/zpool").args(&arg_list)
+                        .spawn()
+                        .map_err(|e| e.to_string())?;
 
                     if block_size.is_some() {
-                        process_output(run_command("/sbin/zfs",
-                                                   &vec!["set".to_string(),
-                                                         format!("recordsize={}",
-                                                                 block_size.unwrap()),
-                                                         name.to_string_lossy().into_owned()]))?;
+                        // If zpool creation is successful then we set these
+                        post_setup_commands.push(("/sbin/zfs".to_string(),
+                                                  vec!["set".to_string(),
+                                                       format!("recordsize={}",
+                                                               block_size.unwrap()),
+                                                       name.to_string_lossy().into_owned()]));
                     }
                     if compression.is_some() {
-                        process_output(run_command("/sbin/zfs",
-                                                   &vec!["set".to_string(),
-                                                         "compression=on".to_string(),
-                                                         name.to_string_lossy().into_owned()]))?;
+                        post_setup_commands.push(("/sbin/zfs".to_string(),
+                                                  vec!["set".to_string(),
+                                                       "compression=on".to_string(),
+                                                       name.to_string_lossy().into_owned()]));
                     }
-                    process_output(run_command("/sbin/zfs",
-                                               &vec!["set".to_string(),
-                                                     "acltype=posixacl".to_string(),
-                                                     name.to_string_lossy().into_owned()]))?;
-                    Ok(0)
+                    post_setup_commands.push(("/sbin/zfs".to_string(),
+                                              vec!["set".to_string(),
+                                                   "acltype=posixacl".to_string(),
+                                                   name.to_string_lossy().into_owned()]));
+                    return Ok(AsyncInit {
+                                  format_child: zpool_create,
+                                  post_setup_commands: post_setup_commands,
+                                  device: brick_device,
+                              });
                 }
                 None => Err(format!("Unable to determine filename for device: {:?}", device)),
             }
@@ -280,7 +334,13 @@ pub fn format_block_device(device: &PathBuf, filesystem: &Filesystem) -> Result<
                                              reserved_blocks_percentage.to_string(),
                                              device.to_string_lossy().to_string()];
 
-            return process_output(run_command("mkfs.ext4", &arg_list));
+            return Ok(AsyncInit {
+                          format_child: Command::new("mkfs.ext4").args(&arg_list)
+                              .spawn()
+                              .map_err(|e| e.to_string())?,
+                          post_setup_commands: vec![],
+                          device: brick_device,
+                      });
         }
     }
 }
@@ -295,7 +355,10 @@ fn get_size(device: &libudev::Device) -> Option<u64> {
     match device.attribute_value("size") {
         // 512 is the block size
         Some(size_str) => {
-            let size = size_str.to_str().unwrap_or("0").parse::<u64>().unwrap_or(0);
+            let size = size_str.to_str()
+                .unwrap_or("0")
+                .parse::<u64>()
+                .unwrap_or(0);
             return Some(size * 512);
         }
         None => return None,
@@ -392,14 +455,77 @@ pub fn get_device_info(device_path: &PathBuf) -> Result<Device, String> {
                 let fs_type = get_fs_type(&device);
 
                 return Ok(Device {
-                    id: id,
-                    name: sysname.to_string_lossy().to_string(),
-                    media_type: media_type,
-                    capacity: capacity,
-                    fs_type: fs_type,
-                });
+                              id: id,
+                              name: sysname.to_string_lossy().to_string(),
+                              media_type: media_type,
+                              capacity: capacity,
+                              fs_type: fs_type,
+                          });
             }
         }
     }
     return Err(format!("Unable to find device with name {:?}", device_path));
+}
+
+fn scan_devices(devices: Vec<String>) -> Result<Vec<BrickDevice>, String> {
+    let mut brick_devices: Vec<BrickDevice> = Vec::new();
+    for brick in devices {
+        let device_path = PathBuf::from(brick);
+        // Translate to mount location
+        let brick_filename = match device_path.file_name() {
+            Some(name) => name,
+            None => {
+                log!(format!("Unable to determine filename for device: {:?}. Skipping",
+                             device_path),
+                     Error);
+                continue;
+            }
+        };
+        log!(format!("Checking if {:?} is a block device", &device_path));
+        let is_block_device = is_block_device(&device_path).unwrap_or(false);
+        if !is_block_device {
+            log!(format!("Skipping invalid block device: {:?}", &device_path));
+            continue;
+        }
+        log!(format!("Checking if {:?} is initialized", &device_path));
+        let initialized = device_initialized(&device_path).unwrap_or(false);
+        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
+        brick_devices.push(BrickDevice {
+                               is_block_device: is_block_device,
+                               // All devices start at initialized is false
+                               initialized: initialized,
+                               dev_path: device_path.clone(),
+                               mount_path: mount_path,
+                           });
+    }
+    Ok(brick_devices)
+}
+
+pub fn get_manual_bricks() -> Result<Vec<BrickDevice>, String> {
+    log!("Gathering list of manually specified brick devices");
+    let manual_config_brick_devices: Vec<String> = get_config_value("brick_devices")
+        .unwrap_or("".to_string())
+        .split(" ")
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    log!(format!("List of manual storage brick devices: {:?}",
+                 manual_config_brick_devices));
+    let bricks = scan_devices(manual_config_brick_devices)?;
+    Ok(bricks)
+}
+
+pub fn get_juju_bricks() -> Result<Vec<BrickDevice>, String> {
+    log!("Gathering list of juju storage brick devices");
+    //Get juju storage devices
+    let juju_config_brick_devices: Vec<String> = juju::storage_list()
+        .unwrap_or("".to_string())
+        .lines()
+        .filter(|s| !s.is_empty())
+        .map(|s| juju::storage_get(s).unwrap().trim().to_string())
+        .collect();
+    log!(format!("List of juju storage brick devices: {:?}",
+                 juju_config_brick_devices));
+    let bricks = scan_devices(juju_config_brick_devices)?;
+    Ok(bricks)
 }

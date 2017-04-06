@@ -3,7 +3,6 @@ extern crate juju;
 
 use std::io::Read;
 use std::net::IpAddr;
-use std::path::PathBuf;
 use std::str::FromStr;
 
 use gluster::{GlusterOption, SplitBrainPolicy, Toggle};
@@ -13,9 +12,9 @@ use super::super::apt;
 use super::super::block;
 use super::super::ctdb;
 use super::super::samba::setup_samba;
-use super::super::{brick_and_server_cartesian_product, device_initialized, ephemeral_unmount,
-                   find_new_peers, get_cluster_networks, get_config_value, initialize_storage,
-                   mount_cluster, probe_in_units, Status, wait_for_peers};
+use super::super::{brick_and_server_cartesian_product, ephemeral_unmount, find_new_peers,
+                   finish_initialization, get_cluster_networks, get_config_value,
+                   initialize_storage, mount_cluster, probe_in_units, Status, wait_for_peers};
 
 use std::fs::File;
 
@@ -205,7 +204,7 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
                                                      Transport::Tcp,
                                                      brick_list,
                                                      true)
-                .map_err(|e| e.to_string());
+                    .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
         VolumeType::Disperse => {
@@ -231,7 +230,7 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
                                                      Transport::Tcp,
                                                      brick_list,
                                                      true)
-                .map_err(|e| e.to_string());
+                    .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
         VolumeType::DistributedAndDisperse => {
@@ -296,77 +295,73 @@ fn expand_volume(peers: Vec<Peer>, volume_info: Option<Volume>) -> Result<i32, S
 fn get_brick_list(peers: &Vec<Peer>,
                   volume: Option<Volume>)
                   -> Result<Vec<gluster::volume::Brick>, Status> {
-
     // Default to 3 replicas if the parsing fails
+    let mut brick_devices: Vec<block::BrickDevice> = Vec::new();
+
     let replica_config = get_config_value("replication_level").unwrap_or("3".to_string());
     let replicas = replica_config.parse().unwrap_or(3);
-    let config_brick_devices: Vec<String> = get_config_value("brick_devices")
-        .unwrap_or("".to_string())
-        .split(" ")
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    log!(format!("user config storage_list: {:?}", config_brick_devices));
+
+    // TODO: Should this fail the hook or just keep going?
+    log!("Checking for ephemeral unmount");
+    ephemeral_unmount().map_err(|e| Status::InvalidConfig(e))?;
+
+    // Get user configured storage devices
+    let manual_brick_devices = block::get_manual_bricks().map_err(|e| Status::InvalidConfig(e))?;
+    brick_devices.extend(manual_brick_devices);
+
+    // Get the juju storage block devices
+    let juju_config_brick_devices = block::get_juju_bricks().map_err(|e| Status::InvalidConfig(e))?;
+    brick_devices.extend(juju_config_brick_devices);
+
+    log!(format!("storage devices: {:?}", brick_devices));
+
+    let mut format_handles: Vec<block::AsyncInit> = Vec::new();
     let mut brick_paths: Vec<String> = Vec::new();
-
-    let juju_storage_bricks = juju::storage_list().unwrap();
-    log!(format!("juju storage_list: {:?}", juju_storage_bricks));
-
-    // Add any devices that were set with juju storage
-    for brick in juju_storage_bricks.lines() {
-        // This is the /dev/ location.
-        let storage_location = juju::storage_get(brick.trim()).unwrap();
-        // Translate to mount location
-        let brick_path = PathBuf::from(storage_location.trim());
-        let brick_filename = match brick_path.file_name() {
-            Some(name) => name,
-            None => {
-                log!(format!("Unable to determine filename for device: {:?}. Skipping",
-                             brick),
-                     Error);
-                continue;
-            }
-        };
-        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
-
-        brick_paths.push(mount_path);
-    }
-
-    // Add any devices that were set with the config.yaml
-    for brick in config_brick_devices {
-        let brick_path = PathBuf::from(brick);
-        log!(format!("brick_path: {:?}", brick_path));
-
-        if block::is_block_device(&brick_path).is_err() {
-            log!(format!("{:?} is not a block device. Skipping.", brick_path));
-            continue;
+    // Format all drives in parallel
+    for device in &mut brick_devices {
+        if !device.initialized {
+            log!(format!("Calling initialize_storage for {:?}", device.dev_path));
+            // Spawn all format commands in the background
+            format_handles.push(
+                initialize_storage(device.clone()).map_err(|e| Status::FailedToCreate(e))?);
+        } else {
+            // The device is already initialized, lets add it to our usable paths list
+            log!(format!("{:?} is already initialized", device.dev_path));
+            brick_paths.push(device.mount_path.clone());
         }
-        // If ephemeral-unmount is set and the directory is mounted we unmount it.
-        // Otherwise nothing happens
-        // TODO: Should this fail the hook or just skip?
-        log!("Checking for ephemeral unmount");
-        ephemeral_unmount().map_err(|e| Status::InvalidConfig(e))?;
-
-        // Translate to mount location
-        let brick_filename = match brick_path.file_name() {
-            Some(name) => name,
-            None => {
-                log!(format!("Unable to determine filename for device: {:?}. Skipping",
-                             brick_path),
-                     Error);
-                continue;
-            }
-        };
-        // This needs to be called for the user config devices but not for juju storage devices
-        // Juju storage has a separate hook that fires to ensure the devices are already setup
-        if !device_initialized(&brick_path).map_err(|e| Status::InvalidConfig(e.to_string()))? {
-            log!(format!("Calling initialize_storage for {:?}", brick_path));
-            initialize_storage(&brick_path).map_err(|e| Status::FailedToCreate(e.to_string()))?;
-        }
-
-        let mount_path = format!("/mnt/{}", brick_filename.to_string_lossy());
-        brick_paths.push(mount_path);
     }
+    // Wait for all children to finish formatting their drives
+    for handle in format_handles {
+        let output_result = handle.format_child.wait_with_output();
+        match output_result {
+            Ok(output) => {
+                match block::process_output(output) {
+                    Ok(_) => {
+                        // success
+                        // 1. Run any post setup commands if needed
+                        finish_initialization(&handle.device.dev_path)
+                            .map_err(|e| Status::FailedToCreate(e.to_string()))?;
+                        brick_paths.push(handle.device.mount_path.clone());
+                    }
+                    Err(e) => {
+                        // Failed
+                        log!(format!("Device {:?} formatting failed with error: {}. Skipping",
+                                     &handle.device.dev_path,
+                                     e),
+                             Error);
+                    }
+                }
+            }
+            Err(e) => {
+                //Failed
+                log!(format!("Device {:?} formatting failed with error: {}. Skipping",
+                             &handle.device.dev_path,
+                             e),
+                     Error);
+            }
+        }
+    }
+    log!(format!("Usable brick paths: {:?}", brick_paths));
 
     if volume.is_none() {
         log!("Volume is none");
