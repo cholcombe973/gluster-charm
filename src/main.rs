@@ -9,6 +9,7 @@ mod updatedb;
 mod upgrade;
 
 extern crate debian;
+extern crate fstab;
 extern crate gluster;
 extern crate ipnetwork;
 extern crate itertools;
@@ -19,7 +20,6 @@ extern crate serde_yaml;
 extern crate uuid;
 
 use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
-use hooks::brick_attached::brick_attached;
 use hooks::brick_detached::brick_detached;
 use hooks::config_changed::config_changed;
 use hooks::fuse_relation_joined::fuse_relation_joined;
@@ -319,6 +319,10 @@ fn ephemeral_unmount() -> Result<(), String> {
             if mountpoint.is_empty() {
                 return Ok(());
             }
+            // Remove the entry from the fstab if it's set
+            let fstab = fstab::FsTab::new(&Path::new("/etc/fstab"));
+            fstab.remove_entry(&mountpoint).map_err(|e| e.to_string())?;
+
             if is_mounted(&mountpoint)? {
                 let mut cmd = std::process::Command::new("umount");
                 cmd.arg(mountpoint);
@@ -379,13 +383,27 @@ fn finish_initialization(device_path: &PathBuf) -> Result<(), Error> {
 
         block::mount_device(&device_info, &mount_path)
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        let fstab_entry = fstab::FsEntry {
+            fs_spec: format!("UUID={}",
+                             device_info.id
+                                 .unwrap()
+                                 .hyphenated()
+                                 .to_string()),
+            mountpoint: PathBuf::from(&mount_path),
+            vfs_type: device_info.fs_type.to_string(),
+            mount_options: vec!["defaults".to_string()],
+            dump: false,
+            fsck_order: 2,
+        };
+        log!(format!("Adding {:?} to fstab", fstab_entry));
+        let fstab = fstab::FsTab::new(&Path::new("/etc/fstab"));
+        fstab.add_entry(fstab_entry)?;
     }
     unit_storage.set(&device_path.to_string_lossy(), true)
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
     log!(format!("Removing mount path from updatedb {:?}", mount_path),
          Info);
     updatedb::add_to_prunepath(&mount_path, &Path::new("/etc/updatedb.conf"))?;
-    // TODO Add block device UUID to /etc/fstab
     Ok(())
 }
 
@@ -587,8 +605,7 @@ fn main() {
     if args.len() > 0 {
         // Register our hooks with the Juju library
         let hook_registry: Vec<juju::Hook> =
-            vec![hook!("brick-storage-attached", brick_attached),
-                 hook!("brick-storage-detaching", brick_detached),
+            vec![hook!("brick-storage-detaching", brick_detached),
                  hook!("collect-metrics", collect_metrics),
                  hook!("config-changed", config_changed),
                  hook!("create-volume-quota", enable_volume_quota),
