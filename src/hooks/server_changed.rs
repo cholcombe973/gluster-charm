@@ -360,7 +360,6 @@ fn get_brick_list(peers: &Vec<Peer>,
                      Error);
             }
         }
-
     }
     log!(format!("Usable brick paths: {:?}", brick_paths));
 

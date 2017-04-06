@@ -321,6 +321,7 @@ fn ephemeral_unmount() -> Result<(), String> {
             }
             // Remove the entry from the fstab if it's set
             let fstab = fstab::FsTab::new(&Path::new("/etc/fstab"));
+            log!("Removing ephemeral mount from fstab");
             fstab.remove_entry(&mountpoint).map_err(|e| e.to_string())?;
 
             if is_mounted(&mountpoint)? {

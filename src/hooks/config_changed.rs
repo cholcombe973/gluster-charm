@@ -2,50 +2,94 @@ extern crate gluster;
 extern crate juju;
 
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-use super::super::{create_sysctl, ephemeral_unmount, device_initialized, get_config_value,
-                   get_glusterfs_version, initialize_storage, is_mounted};
+use super::super::{create_sysctl, ephemeral_unmount, finish_initialization, get_glusterfs_version,
+                   initialize_storage};
 use super::super::apt;
 use super::super::block;
 use super::super::upgrade;
 
 pub fn config_changed() -> Result<(), String> {
-    // If either of these fail we fail the hook
-    check_for_new_devices()?;
-    check_for_upgrade()?;
-
-    // If this fails don't fail the hook
+    if let Err(err) = check_for_new_devices() {
+        log!(format!("Checking for new devices failed with error: {}", err),
+             Error);
+    }
     if let Err(err) = check_for_sysctl() {
         log!(format!("Setting sysctl's failed with error: {}", err),
              Error);
     }
+    // If fails we fail the hook
+    check_for_upgrade()?;
     return Ok(());
 }
 
 fn check_for_new_devices() -> Result<(), String> {
     log!("Checking for new devices", Info);
     let config = juju::Config::new().map_err(|e| e.to_string())?;
-    if config.changed("brick_devices").map_err(|e| e.to_string())? {
-        // Get the changed list of brick devices and initialize each one
-        let mut brick_devices: Vec<block::BrickDevice> = Vec::new();
+    log!("Checking for ephemeral unmount");
+    ephemeral_unmount()?;
+    //if config.changed("brick_devices").map_err(|e| e.to_string())? {
+    let mut brick_devices: Vec<block::BrickDevice> = Vec::new();
+    // Get user configured storage devices
+    let manual_brick_devices = block::get_manual_bricks()?;
+    brick_devices.extend(manual_brick_devices);
 
-        log!("Checking for ephemeral unmount");
-        ephemeral_unmount()?;
+    // Get the juju storage block devices
+    let juju_config_brick_devices = block::get_juju_bricks()?;
+    brick_devices.extend(juju_config_brick_devices);
 
-        // Get user configured storage devices
-        let manual_brick_devices = block::get_manual_bricks()?;
-        brick_devices.extend(manual_brick_devices);
+    log!(format!("storage devices: {:?}", brick_devices));
 
-        // Get the juju storage block devices
-        let juju_config_brick_devices = block::get_juju_bricks()?;
-        brick_devices.extend(juju_config_brick_devices);
-
-        log!(format!("storage devices: {:?}", brick_devices));
-    } else {
-        log!("No new devices found");
+    let mut format_handles: Vec<block::AsyncInit> = Vec::new();
+    let mut brick_paths: Vec<String> = Vec::new();
+    // Format all drives in parallel
+    for device in &mut brick_devices {
+        if !device.initialized {
+            log!(format!("Calling initialize_storage for {:?}", device.dev_path));
+            // Spawn all format commands in the background
+            format_handles.push(initialize_storage(device.clone())?);
+        } else {
+            // The device is already initialized, lets add it to our usable paths list
+            log!(format!("{:?} is already initialized", device.dev_path));
+            brick_paths.push(device.mount_path.clone());
+        }
     }
+    // Wait for all children to finish formatting their drives
+    for handle in format_handles {
+        let output_result = handle.format_child.wait_with_output();
+        match output_result {
+            Ok(output) => {
+                match block::process_output(output) {
+                    Ok(_) => {
+                        // success
+                        // 1. Run any post setup commands if needed
+                        finish_initialization(&handle.device.dev_path).map_err(|e| e.to_string())?;
+                        brick_paths.push(handle.device.mount_path.clone());
+                    }
+                    Err(e) => {
+                        // Failed
+                        log!(format!("Device {:?} formatting failed with error: {}. Skipping",
+                                     &handle.device.dev_path,
+                                     e),
+                             Error);
+                    }
+                }
+            }
+            Err(e) => {
+                //Failed
+                log!(format!("Device {:?} formatting failed with error: {}. Skipping",
+                             &handle.device.dev_path,
+                             e),
+                     Error);
+            }
+        }
+    }
+    log!(format!("Usable brick paths: {:?}", brick_paths));
+    //} else {
+    //    log!("No new devices found");
+    //}
     Ok(())
 }
 

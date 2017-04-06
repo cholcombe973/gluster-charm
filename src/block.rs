@@ -65,6 +65,8 @@ pub enum MediaType {
 #[derive(Debug, Eq, PartialEq)]
 pub enum FilesystemType {
     Btrfs,
+    Ext2,
+    Ext3,
     Ext4,
     Xfs,
     Zfs,
@@ -75,10 +77,34 @@ impl FilesystemType {
     pub fn from_str(fs_type: &str) -> FilesystemType {
         match fs_type {
             "btrfs" => FilesystemType::Btrfs,
+            "ext2" => FilesystemType::Ext2,
+            "ext3" => FilesystemType::Ext3,
             "ext4" => FilesystemType::Ext4,
             "xfs" => FilesystemType::Xfs,
             "zfs" => FilesystemType::Zfs,
             _ => FilesystemType::Unknown,
+        }
+    }
+    pub fn to_str(&self) -> &str {
+        match self {
+            &FilesystemType::Btrfs => "btrfs",
+            &FilesystemType::Ext2 => "ext2",
+            &FilesystemType::Ext3 => "ext3",
+            &FilesystemType::Ext4 => "ext4",
+            &FilesystemType::Xfs => "xfs",
+            &FilesystemType::Zfs => "zfs",
+            &FilesystemType::Unknown => "unknown",
+        }
+    }
+    pub fn to_string(&self) -> String {
+        match self {
+            &FilesystemType::Btrfs => "btrfs".to_string(),
+            &FilesystemType::Ext2 => "ext2".to_string(),
+            &FilesystemType::Ext3 => "ext3".to_string(),
+            &FilesystemType::Ext4 => "ext4".to_string(),
+            &FilesystemType::Xfs => "xfs".to_string(),
+            &FilesystemType::Zfs => "zfs".to_string(),
+            &FilesystemType::Unknown => "unknown".to_string(),
         }
     }
 }
@@ -496,7 +522,7 @@ pub fn get_juju_bricks() -> Result<Vec<BrickDevice>, String> {
         .unwrap_or("".to_string())
         .lines()
         .filter(|s| !s.is_empty())
-        .map(|s| juju::storage_get(s).unwrap())
+        .map(|s| juju::storage_get(s).unwrap().trim().to_string())
         .collect();
     log!(format!("List of juju storage brick devices: {:?}",
                  juju_config_brick_devices));
