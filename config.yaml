@@ -32,6 +32,7 @@ options:
       The type of volume to setup.  DistributedAndReplicate is sufficient
       for most use cases.
       Other options include: Distribute,
+        Arbiter,
         Stripe,
         StripedAndReplicate,
         Disperse,

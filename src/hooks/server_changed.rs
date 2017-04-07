@@ -171,10 +171,6 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
         }
     };
     log!(format!("Got brick list: {:?}", brick_list));
-
-    // Check to make sure the bricks are formatted and mounted
-    // let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
-
     log!(format!("Creating volume of type {:?} with brick list {:?}",
                  cluster_type,
                  brick_list),
@@ -194,6 +190,12 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
         VolumeType::Replicate => {
             let _ =
                 volume_create_replicated(&volume_name, replicas, Transport::Tcp, brick_list, true)
+                    .map_err(|e| e.to_string());
+            Ok(Status::Created)
+        }
+        VolumeType::Arbiter => {
+            let _ =
+                volume_create_arbiter(&volume_name, replicas, 1, Transport::Tcp, brick_list, true)
                     .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
