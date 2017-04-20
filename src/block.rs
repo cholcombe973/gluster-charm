@@ -10,6 +10,7 @@ use uuid::Uuid;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
+use std::str::FromStr;
 
 // Formats a block device at Path p with XFS
 #[derive(Clone, Debug)]
@@ -52,6 +53,30 @@ pub struct AsyncInit {
     pub post_setup_commands: Vec<(String, Vec<String>)>,
     /// The device we're initializing
     pub device: BrickDevice,
+}
+
+#[derive(Debug)]
+pub enum Scheduler {
+    Anticipatory,
+    /// Try to balance latency and throughput
+    Cfq,
+    /// Latency is most important
+    Deadline,
+    /// Throughput is most important
+    Noop,
+}
+
+impl FromStr for Scheduler {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "anticipatory" => Ok(Scheduler::Anticipatory),
+            "cfq" => Ok(Scheduler::Cfq),
+            "deadline" => Ok(Scheduler::Deadline),
+            "noop" => Ok(Scheduler::Noop),
+            _ => Err("Unknown scheduler".to_string()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -131,13 +156,18 @@ pub enum Filesystem {
         node_size: u64,
     },
     Ext4 {
-        inode_size: u64,
+        inode_size: Option<u64>,
         reserved_blocks_percentage: u8,
+        stride: Option<u64>,
+        stripe_width: Option<u64>,
     },
     Xfs {
         // This is optional.  Boost knobs are on by default:
         // http://xfs.org/index.php/XFS_FAQ#Q:_I_want_to_tune_my_XFS_filesystems_for_.3Csomething.3E
+        block_size: Option<u64>, // Note this MUST be a power of 2
         inode_size: Option<u64>,
+        stripe_size: Option<u64>, // RAID controllers stripe size in BYTES
+        stripe_width: Option<u64>, // IE # of data disks
         force: bool,
     },
     Zfs {
@@ -162,7 +192,10 @@ impl Filesystem {
             }
             "xfs" => {
                 Filesystem::Xfs {
-                    inode_size: None,
+                    stripe_size: None,
+                    stripe_width: None,
+                    block_size: None,
+                    inode_size: Some(512),
                     force: false,
                 }
             }
@@ -175,12 +208,17 @@ impl Filesystem {
             }
             "ext4" => {
                 Filesystem::Ext4 {
-                    inode_size: 256,
+                    inode_size: Some(512),
                     reserved_blocks_percentage: 0,
+                    stride: None,
+                    stripe_width: None,
                 }
             }
             _ => {
                 Filesystem::Xfs {
+                    stripe_size: None,
+                    stripe_width: None,
+                    block_size: None,
                     inode_size: None,
                     force: false,
                 }
@@ -250,16 +288,26 @@ pub fn format_block_device(brick_device: BrickDevice,
                           device: brick_device,
                       });
         }
-        &Filesystem::Xfs { ref inode_size, ref force } => {
+        &Filesystem::Xfs { ref block_size,
+                           ref inode_size,
+                           ref stripe_size,
+                           ref stripe_width,
+                           ref force } => {
             let mut arg_list: Vec<String> = Vec::new();
 
             if (*inode_size).is_some() {
                 arg_list.push("-i".to_string());
-                arg_list.push(inode_size.unwrap().to_string());
+                arg_list.push(format!("size={}", inode_size.unwrap()));
             }
 
             if *force {
                 arg_list.push("-f".to_string());
+            }
+
+            if (*stripe_size).is_some() && (*stripe_width).is_some() {
+                arg_list.push("-d".to_string());
+                arg_list.push(format!("su={}", stripe_size.unwrap()));
+                arg_list.push(format!("sw={}", stripe_width.unwrap()));
             }
 
             arg_list.push(device.to_string_lossy().to_string());
@@ -318,6 +366,10 @@ pub fn format_block_device(brick_device: BrickDevice,
                                               vec!["set".to_string(),
                                                    "acltype=posixacl".to_string(),
                                                    name.to_string_lossy().into_owned()]));
+                    post_setup_commands.push(("/sbin/zfs".to_string(),
+                                              vec!["set".to_string(),
+                                                   "atime=off".to_string(),
+                                                   name.to_string_lossy().into_owned()]));
                     return Ok(AsyncInit {
                                   format_child: zpool_create,
                                   post_setup_commands: post_setup_commands,
@@ -327,12 +379,26 @@ pub fn format_block_device(brick_device: BrickDevice,
                 None => Err(format!("Unable to determine filename for device: {:?}", device)),
             }
         }
-        &Filesystem::Ext4 { ref inode_size, ref reserved_blocks_percentage } => {
-            let arg_list: Vec<String> = vec!["-I".to_string(),
-                                             inode_size.to_string(),
-                                             "-m".to_string(),
-                                             reserved_blocks_percentage.to_string(),
-                                             device.to_string_lossy().to_string()];
+        &Filesystem::Ext4 { ref inode_size,
+                            ref reserved_blocks_percentage,
+                            ref stride,
+                            ref stripe_width } => {
+            let mut arg_list: Vec<String> = vec!["-m".to_string(),
+                                                 reserved_blocks_percentage.to_string()];
+
+            if (*inode_size).is_some() {
+                arg_list.push("-I".to_string());
+                arg_list.push(inode_size.unwrap().to_string());
+            }
+            if (*stride).is_some() {
+                arg_list.push("-E".to_string());
+                arg_list.push(format!("stride={}", stride.unwrap()));
+            }
+            if (*stripe_width).is_some() {
+                arg_list.push("-E".to_string());
+                arg_list.push(format!("stripe_width={}", stripe_width.unwrap()));
+            }
+            arg_list.push(device.to_string_lossy().into_owned());
 
             return Ok(AsyncInit {
                           format_child: Command::new("mkfs.ext4").args(&arg_list)
@@ -522,7 +588,10 @@ pub fn get_juju_bricks() -> Result<Vec<BrickDevice>, String> {
         .unwrap_or("".to_string())
         .lines()
         .filter(|s| !s.is_empty())
-        .map(|s| juju::storage_get(s).unwrap().trim().to_string())
+        .map(|s| juju::storage_get(s))
+        .filter(|s| s.is_ok())
+        .filter_map(|s| s.unwrap())
+        .map(|s| s.trim().to_string())
         .collect();
     log!(format!("List of juju storage brick devices: {:?}",
                  juju_config_brick_devices));

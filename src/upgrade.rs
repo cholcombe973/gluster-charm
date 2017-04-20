@@ -52,7 +52,8 @@ pub fn roll_cluster(new_version: &Version) -> Result<(), String> {
     let volume_name = juju::config_get(&"volume_name".to_string()).map_err(|e| e.to_string())?;
     let my_uuid = get_local_uuid()?;
 
-    let volume_bricks = volume_info(&volume_name).map_err(|e| e.to_string())?.bricks;
+    // volume_name always has a default
+    let volume_bricks = volume_info(&volume_name.unwrap()).map_err(|e| e.to_string())?.bricks;
     let mut peer_list: Vec<Peer> = volume_bricks.iter().map(|x| x.peer.clone()).collect();
     log!(format!("peer_list: {:?}", peer_list));
 
@@ -75,10 +76,10 @@ pub fn roll_cluster(new_version: &Version) -> Result<(), String> {
     } else {
         // Check if the previous node has finished
         juju::status_set(juju::Status {
-                status_type: juju::StatusType::Waiting,
-                message: format!("Waiting on {:?} to finish upgrading",
-                                 peer_list[position - 1]),
-            }).map_err(|e| e.to_string())?;
+                             status_type: juju::StatusType::Waiting,
+                             message: format!("Waiting on {:?} to finish upgrading",
+                                              peer_list[position - 1]),
+                         }).map_err(|e| e.to_string())?;
         wait_on_previous_node(&peer_list[position - 1], new_version)?;
         lock_and_roll(&my_uuid, new_version)?;
     }
@@ -88,9 +89,9 @@ pub fn roll_cluster(new_version: &Version) -> Result<(), String> {
 pub fn upgrade_peer(new_version: &Version) -> Result<(), String> {
     let current_version = get_glusterfs_version().map_err(|e| e.to_string())?;
     juju::status_set(juju::Status {
-            status_type: juju::StatusType::Maintenance,
-            message: "Upgrading peer".to_string(),
-        }).map_err(|e| e.to_string())?;
+                         status_type: juju::StatusType::Maintenance,
+                         message: "Upgrading peer".to_string(),
+                     }).map_err(|e| e.to_string())?;
     log!(format!("Current ceph version is {}", current_version));
     log!(format!("Upgrading to: {}", new_version));
 
@@ -165,10 +166,10 @@ fn gluster_key_set(key: &str, timestamp: DateTime<Local>) -> Result<(), String> 
         create_dir("/mnt/glusterfs/.upgrade").map_err(|e| e.to_string())?;
     }
     let mut file = try!(OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(&format!("/mnt/glusterfs/.upgrade/{}", key))
-        .map_err(|e| e.to_string()));
+                            .write(true)
+                            .create(true)
+                            .open(&format!("/mnt/glusterfs/.upgrade/{}", key))
+                            .map_err(|e| e.to_string()));
     let encoded = json::encode(&timestamp).map_err(|e| e.to_string())?;
     try!(file.write(&encoded.as_bytes()).map_err(|e| e.to_string()));
     Ok(())

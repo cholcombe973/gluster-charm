@@ -30,11 +30,14 @@ use metrics::collect_metrics;
 
 use std::collections::BTreeMap;
 use std::env;
+use std::error::Error as StdError;
 use std::fs;
 use std::fs::create_dir;
+use std::num::ParseIntError;
 use std::io::{Error, ErrorKind, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
@@ -175,9 +178,35 @@ enum Status {
 
 fn get_config_value(name: &str) -> Result<String, String> {
     match juju::config_get(&name.to_string()) {
-        Ok(v) => Ok(v),
+        Ok(v) => Ok(v.unwrap_or_default()),
         Err(e) => {
             return Err(e.to_string());
+        }
+    }
+}
+
+// Returns None in the case of any error but logs why it happened
+fn get_config_number<T: FromStr<Err = ParseIntError>>(name: &str) -> Option<T> {
+    match juju::config_get(&name.to_string()) {
+        Ok(s) => {
+            match s {
+                Some(field) => {
+                    match T::from_str(&field) {
+                        Ok(value) => Some(value),
+                        Err(e) => {
+                            log!(format!("Error getting config field: {}. {}", name, e),
+                                 Error);
+                            None
+                        }
+                    }
+                }
+                None => None,
+            }
+        }
+        Err(e) => {
+            log!(format!("Error getting config field: {}. {}", name, e),
+                 Error);
+            None
         }
     }
 }
@@ -198,7 +227,10 @@ fn create_sysctl<T: Write>(sysctl: String, f: &mut T) -> Result<usize, String> {
 // Return all the virtual ip networks that will be used
 fn get_cluster_networks() -> Result<Vec<ctdb::VirtualIp>, String> {
     let mut cluster_networks: Vec<ctdb::VirtualIp> = Vec::new();
-    let config_value = juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?;
+    let config_value = match juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())? {
+        Some(vips) => vips,
+        None => return Ok(cluster_networks),
+    };
     let virtual_ips: Vec<&str> = config_value.split(" ").collect();
     for vip in virtual_ips {
         if vip.is_empty() {
@@ -263,8 +295,14 @@ fn probe_in_units(existing_peers: &Vec<Peer>,
 
     log!(format!("Adding in related_units: {:?}", related_units));
     for unit in related_units {
-        let address = juju::relation_get_by_unit(&"private-address".to_string(), &unit)
-            .map_err(|e| e.to_string())?;
+        let address = match juju::relation_get_by_unit(&"private-address".to_string(), &unit)
+            .map_err(|e| e.to_string())?{
+                Some(address) => address,
+                None => {
+                    log!(format!("unit {:?} private-address was blank, skipping.", unit));
+                    continue;
+                }
+            };
         let address_trimmed = address.trim().to_string();
         let already_probed = existing_peers.iter().any(|peer| peer.hostname == address_trimmed);
 
@@ -392,7 +430,7 @@ fn finish_initialization(device_path: &PathBuf) -> Result<(), Error> {
                                  .to_string()),
             mountpoint: PathBuf::from(&mount_path),
             vfs_type: device_info.fs_type.to_string(),
-            mount_options: vec!["defaults".to_string()],
+            mount_options: vec!["noatime".to_string(), "inode64".to_string()],
             dump: false,
             fsck_order: 2,
         };
@@ -405,6 +443,7 @@ fn finish_initialization(device_path: &PathBuf) -> Result<(), Error> {
     log!(format!("Removing mount path from updatedb {:?}", mount_path),
          Info);
     updatedb::add_to_prunepath(&mount_path, &Path::new("/etc/updatedb.conf"))?;
+    // TODO: setup weekly filesystem defrag
     Ok(())
 }
 
@@ -412,6 +451,12 @@ fn finish_initialization(device_path: &PathBuf) -> Result<(), Error> {
 // Return an Initialization struct
 fn initialize_storage(device: block::BrickDevice) -> Result<block::AsyncInit, String> {
     let filesystem_config_value = get_config_value("filesystem_type")?;
+
+    //Custom params
+    let stripe_width = get_config_number::<u64>("raid_stripe_width");
+    let stripe_size = get_config_number::<u64>("raid_stripe_size");
+    let inode_size = get_config_number::<u64>("inode_size");
+
     let filesystem_type = block::FilesystemType::from_str(&filesystem_config_value);
     let init: block::AsyncInit;
 
@@ -424,8 +469,11 @@ fn initialize_storage(device: block::BrickDevice) -> Result<block::AsyncInit, St
                 format!("Formatting block device with XFS: {:?}", &device.dev_path));
 
             let filesystem_type = block::Filesystem::Xfs {
-                inode_size: None,
+                block_size: None,
                 force: true,
+                inode_size: inode_size,
+                stripe_size: stripe_size,
+                stripe_width: stripe_width,
             };
             init = block::format_block_device(device, &filesystem_type)?;
         }
@@ -436,8 +484,10 @@ fn initialize_storage(device: block::BrickDevice) -> Result<block::AsyncInit, St
                 format!("Formatting block device with Ext4: {:?}", &device.dev_path));
 
             let filesystem_type = block::Filesystem::Ext4 {
-                inode_size: 0,
+                inode_size: inode_size,
                 reserved_blocks_percentage: 0,
+                stride: stripe_size,
+                stripe_width: stripe_width,
             };
             init = block::format_block_device(device, &filesystem_type)?;
         }
@@ -472,8 +522,11 @@ fn initialize_storage(device: block::BrickDevice) -> Result<block::AsyncInit, St
                 format!("Formatting block device with XFS: {:?}", &device.dev_path));
 
             let filesystem_type = block::Filesystem::Xfs {
-                inode_size: None,
+                block_size: None,
                 force: true,
+                inode_size: inode_size,
+                stripe_width: stripe_width,
+                stripe_size: stripe_size,
             };
             init = block::format_block_device(device, &filesystem_type)?;
         }

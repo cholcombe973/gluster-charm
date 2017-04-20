@@ -99,14 +99,19 @@ fn check_for_sysctl() -> Result<(), String> {
         let config_path = Path::new("/etc/sysctl.d/50-gluster-charm.conf");
         let mut sysctl_file = File::create(config_path).map_err(|e| e.to_string())?;
         let sysctl_dict = juju::config_get("sysctl").map_err(|e| e.to_string())?;
-        create_sysctl(sysctl_dict, &mut sysctl_file)?;
-        // Reload sysctl's
-        let mut cmd = Command::new("sysctl");
-        cmd.arg("-p");
-        cmd.arg(&config_path.to_string_lossy().into_owned());
-        let output = cmd.output().map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        match sysctl_dict {
+            Some(sysctl) => {
+                create_sysctl(sysctl, &mut sysctl_file)?;
+                // Reload sysctl's
+                let mut cmd = Command::new("sysctl");
+                cmd.arg("-p");
+                cmd.arg(&config_path.to_string_lossy().into_owned());
+                let output = cmd.output().map_err(|e| e.to_string())?;
+                if !output.status.success() {
+                    return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+                }
+            }
+            None => {}
         }
     }
     Ok(())
@@ -126,7 +131,12 @@ fn check_for_upgrade() -> Result<(), String> {
 
     log!("Adding new source line");
     let source = juju::config_get("source").map_err(|e| e.to_string())?;
-    apt::add_source(&source)?;
+    if !source.is_some() {
+        // No upgrade requested
+        log!("Source not set.  Cannot continue with upgrade");
+        return Ok(());
+    }
+    apt::add_source(&source.unwrap())?;
     log!("Calling apt update");
     apt::apt_update()?;
 

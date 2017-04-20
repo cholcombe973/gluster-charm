@@ -13,7 +13,7 @@ pub fn nfs_relation_joined() -> Result<(), String> {
     }
 
     // virtual_ip_addresses isn't set.  Handing back my public address
-    if config_value.is_empty() {
+    if !config_value.is_some() {
         let public_addr = try!(juju::unit_get_public_addr().map_err(|e| e.to_string())).to_string();
         juju::relation_set("gluster-public-address", &public_addr).map_err(|e| e.to_string())?;
     } else {

@@ -46,9 +46,9 @@ fn samba_config_changed(volume_name: &str) -> Result<bool, ::std::io::Error> {
 
 pub fn setup_samba(volume_name: &str) -> Result<(), String> {
     let cifs_config = juju::config_get("cifs").map_err(|e| e.to_string())?;
-    if cifs_config != "True" {
+    if cifs_config.is_none() {
         // Samba isn't enabled
-        log!("Samba is not enabled");
+        log!("Samba option is not enabled");
         return Ok(());
     }
     if !samba_config_changed(volume_name).map_err(|e| e.to_string())? {

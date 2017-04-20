@@ -14,6 +14,49 @@ options:
       These devices are the range of devices that will be checked for and
       used across all service units, in addition to any volumes attached
       via the --storage flag during deployment.
+  raid_stripe_width:
+    type: int
+    description: |
+      If a raid array is being used as the block device please enter the
+      stripe width here so that the filesystem can be aligned properly
+      at creation time.
+      For xfs this is generally # of data disks (don't count parity disks).
+
+      Note: if not using a raid array this should be left blank.
+      This setting has no effect for Btrfs of Zfs
+      Both raid_stripe_width and raid_stripe_unit must be specified together.
+  raid_stripe_unit:
+    type: int
+    description: |
+      If a raid array is being used as the block device please enter the
+      stripe unit here so that the filesystem can be aligned properly at
+      creation time. Note: if not using a raid array this should be left blank.
+      For ext4 this corresponds to stride.
+      Also this should be a power of 2.  Otherwise mkfs will fail.
+      Note: This setting has no effect for Btrfs of Zfs
+      Both raid_stripe_width and raid_stripe_unit must be specified together.
+  inode_size:
+    type: int
+    default: 512
+    description: |
+      Inode size can be set at brick filesystem creation time.  This is generally
+      helpful in cases where metadata will be split into multiple iops.
+  disk_elevator:
+    type: string
+    default: deadline
+    description: |
+      The disk elevator or I/O scheduler is used to determine how I/O operations
+      are handled by the kernel on a per disk level.  If you don't know what
+      this means or is used for than leaving the default is a safe choice. I/O
+      intensive applications like Gluster usually benefit from using the deadline
+      scheduler over CFQ.  If you have a hardware raid card or a solid state
+      drive then setting noop here could improve your performance.
+      The quick high level summary is: Deadline is primarily concerned with
+      latency. Noop is primarily concerned with throughput.
+      Options include:
+        cfq
+        deadline
+        noop
   ephemeral_unmount:
     type: string
     default:

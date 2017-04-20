@@ -9,30 +9,33 @@ use std::str::FromStr;
 pub fn enable_volume_quota() -> Result<(), String> {
     // Gather our action parameters
     let volume = match juju::action_get("volume") {
-        Ok(v) => v,
-        Err(e) => {
-            // Notify the user of the failure and then return the error up the stack
-            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
-            return Err(e.to_string());
+            Ok(v) => v,
+            Err(e) => {
+                // Notify the user of the failure and then return the error up the stack
+                juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
+                return Err(e.to_string());
+            }
         }
-    };
+        .unwrap();
     let usage_limit = match juju::action_get("usage-limit") {
-        Ok(usage) => usage,
-        Err(e) => {
-            // Notify the user of the failure and then return the error up the stack
-            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
-            return Err(e.to_string());
+            Ok(usage) => usage,
+            Err(e) => {
+                // Notify the user of the failure and then return the error up the stack
+                juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
+                return Err(e.to_string());
+            }
         }
-    };
+        .unwrap();
     let parsed_usage_limit = u64::from_str(&usage_limit).map_err(|e| e.to_string())?;
     let path = match juju::action_get("path") {
-        Ok(p) => p,
-        Err(e) => {
-            // Notify the user of the failure and then return the error up the stack
-            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
-            return Err(e.to_string());
+            Ok(p) => p,
+            Err(e) => {
+                // Notify the user of the failure and then return the error up the stack
+                juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
+                return Err(e.to_string());
+            }
         }
-    };
+        .unwrap();
 
     // Turn quotas on if not already enabled
     let quotas_enabled = volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
@@ -47,21 +50,23 @@ pub fn enable_volume_quota() -> Result<(), String> {
 pub fn disable_volume_quota() -> Result<(), String> {
     // Gather our action parameters
     let volume = match juju::action_get("volume") {
-        Ok(v) => v,
-        Err(e) => {
-            // Notify the user of the failure and then return the error up the stack
-            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
-            return Err(e.to_string());
+            Ok(v) => v,
+            Err(e) => {
+                // Notify the user of the failure and then return the error up the stack
+                juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
+                return Err(e.to_string());
+            }
         }
-    };
+        .unwrap();
     let path = match juju::action_get("path") {
-        Ok(p) => p,
-        Err(e) => {
-            // Notify the user of the failure and then return the error up the stack
-            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
-            return Err(e.to_string());
+            Ok(p) => p,
+            Err(e) => {
+                // Notify the user of the failure and then return the error up the stack
+                juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
+                return Err(e.to_string());
+            }
         }
-    };
+        .unwrap();
 
     let quotas_enabled = volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
     if quotas_enabled {
@@ -81,25 +86,26 @@ pub fn disable_volume_quota() -> Result<(), String> {
 pub fn list_volume_quotas() -> Result<(), String> {
     // Gather our action parameters
     let volume = match juju::action_get("volume") {
-        Ok(v) => v,
-        Err(e) => {
-            // Notify the user of the failure and then return the error up the stack
-            log!(format!("Failed to get volume param: {:?}", e));
-            juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
-            return Err(e.to_string());
+            Ok(v) => v,
+            Err(e) => {
+                // Notify the user of the failure and then return the error up the stack
+                log!(format!("Failed to get volume param: {:?}", e));
+                juju::action_fail(&e.to_string()).map_err(|e| e.to_string())?;
+                return Err(e.to_string());
+            }
         }
-    };
+        .unwrap();
     let quotas_enabled = volume_quotas_enabled(&volume).map_err(|e| e.to_string())?;
     if quotas_enabled {
         match quota_list(&volume) {
             Ok(quotas) => {
                 let quota_string: Vec<String> = quotas.iter()
                     .map(|quota| {
-                        format!("path: {:?} limit: {} used: {}",
-                                quota.path,
-                                quota.limit,
-                                quota.used)
-                    })
+                             format!("path: {:?} limit: {} used: {}",
+                                     quota.path,
+                                     quota.limit,
+                                     quota.used)
+                         })
                     .collect();
                 juju::action_set("quotas", &quota_string.join("\n")).map_err(|e| e.to_string())?;
                 return Ok(());

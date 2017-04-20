@@ -87,7 +87,7 @@ pub fn server_changed() -> Result<(), String> {
     } else {
         // Non leader units
         let vol_started = juju::relation_get("started").map_err(|e| e.to_string())?;
-        if !vol_started.is_empty() {
+        if vol_started.is_some() {
             mount_cluster(&volume_name)?;
             // Setup ctdb and samba after the volume comes up on non leader units
             setup_ctdb()?;
@@ -410,7 +410,7 @@ fn get_brick_list(peers: &Vec<Peer>,
 }
 // Add all the peers in the gluster cluster to the ctdb cluster
 fn setup_ctdb() -> Result<(), String> {
-    if juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?.is_empty() {
+    if juju::config_get("virtual_ip_addresses").map_err(|e| e.to_string())?.is_none() {
         // virtual_ip_addresses isn't set.  Skip setting ctdb up
         return Ok(());
     }
@@ -511,14 +511,16 @@ fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
 
             // Set the split brain policy if requested
             if let Ok(splitbrain_policy) = juju::config_get("splitbrain_policy") {
-                match SplitBrainPolicy::from_str(&splitbrain_policy) {
+                // config.yaml has a default here.  Should always have a value
+                let split_policy = splitbrain_policy.unwrap();
+                match SplitBrainPolicy::from_str(&split_policy) {
                     Ok(policy) => {
                         settings.push(GlusterOption::FavoriteChildPolicy(policy));
                     }
                     Err(_) => {
                         log!(format!("Failed to parse splitbrain_policy config setting: \
                                             {}.",
-                                     splitbrain_policy),
+                                     split_policy),
                              Error);
                     }
                 };
