@@ -399,6 +399,12 @@ fn device_initialized(brick_path: &PathBuf) -> Result<bool, JujuError> {
 fn finish_initialization(device_path: &PathBuf) -> Result<(), Error> {
     let filesystem_config_value =
         get_config_value("filesystem_type").map_err(|e| Error::new(ErrorKind::Other, e))?;
+    let defrag_interval =
+        get_config_value("defragmentation_interval").map_err(|e| Error::new(ErrorKind::Other, e))?;
+    let disk_elevator =
+        get_config_value("disk_elevator").map_err(|e| Error::new(ErrorKind::Other, e))?;
+    let scheduler =
+        block::Scheduler::from_str(&disk_elevator).map_err(|e| Error::new(ErrorKind::Other, e))?;
     let filesystem_type = block::FilesystemType::from_str(&filesystem_config_value);
     let mount_path = format!("/mnt/{}",
                              device_path.file_name().unwrap().to_string_lossy());
@@ -443,7 +449,8 @@ fn finish_initialization(device_path: &PathBuf) -> Result<(), Error> {
     log!(format!("Removing mount path from updatedb {:?}", mount_path),
          Info);
     updatedb::add_to_prunepath(&mount_path, &Path::new("/etc/updatedb.conf"))?;
-    // TODO: setup weekly filesystem defrag
+    block::weekly_defrag(&mount_path, &filesystem_type, &defrag_interval)?;
+    block::set_elevator(&device_path, &scheduler)?;
     Ok(())
 }
 

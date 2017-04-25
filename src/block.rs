@@ -1,13 +1,17 @@
 extern crate juju;
 extern crate libudev;
 extern crate regex;
+extern crate shellscript;
 
 use self::regex::Regex;
 use super::apt::apt_install;
 use super::{device_initialized, get_config_value};
 use uuid::Uuid;
 
+use std::fmt;
+use std::fs::File;
 use std::ffi::OsStr;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 use std::str::FromStr;
@@ -57,7 +61,6 @@ pub struct AsyncInit {
 
 #[derive(Debug)]
 pub enum Scheduler {
-    Anticipatory,
     /// Try to balance latency and throughput
     Cfq,
     /// Latency is most important
@@ -66,15 +69,25 @@ pub enum Scheduler {
     Noop,
 }
 
+impl fmt::Display for Scheduler {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
+            &Scheduler::Cfq => "cfq",
+            &Scheduler::Deadline => "deadline",
+            &Scheduler::Noop => "noop",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 impl FromStr for Scheduler {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "anticipatory" => Ok(Scheduler::Anticipatory),
             "cfq" => Ok(Scheduler::Cfq),
             "deadline" => Ok(Scheduler::Deadline),
             "noop" => Ok(Scheduler::Noop),
-            _ => Err("Unknown scheduler".to_string()),
+            _ => Err(format!("Unknown scheduler {}", s)),
         }
     }
 }
@@ -565,6 +578,70 @@ fn scan_devices(devices: Vec<String>) -> Result<Vec<BrickDevice>, String> {
                            });
     }
     Ok(brick_devices)
+}
+
+pub fn set_elevator(device_path: &PathBuf,
+                    elevator: &Scheduler)
+                    -> Result<usize, ::std::io::Error> {
+    let device_name = match device_path.file_name() {
+        Some(name) => name.to_string_lossy().into_owned(),
+        None => "".to_string(),
+    };
+    let mut f = File::open("/etc/rc.local")?;
+    let elevator_cmd = format!("echo {scheduler} > /sys/block/{device}/queue/scheduler",
+                               scheduler = elevator,
+                               device = device_name);
+
+    let mut script = shellscript::parse(&mut f)?;
+    let existing_cmd = script.commands.iter().position(|cmd| cmd.contains(&device_name));
+    if let Some(pos) = existing_cmd {
+        script.commands.remove(pos);
+    }
+    script.commands.push(elevator_cmd);
+    let mut f = File::create("/etc/rc.local")?;
+    let bytes_written = script.write(&mut f)?;
+    Ok(bytes_written)
+}
+
+pub fn weekly_defrag(mount: &str,
+                     fs_type: &FilesystemType,
+                     interval: &str)
+                     -> Result<usize, ::std::io::Error> {
+    let crontab = Path::new("/var/spool/cron/crontabs/root");
+    let defrag_command = match fs_type {
+        &FilesystemType::Ext4 => "e4defrag",
+        &FilesystemType::Btrfs => "btrfs filesystem defragment -r",
+        &FilesystemType::Xfs => "xfs_fsr",
+        _ => "",
+    };
+    let job = format!("{interval} {cmd} {path}",
+                      interval = interval,
+                      cmd = defrag_command,
+                      path = mount);
+
+    //TODO Change over to using the cronparse library.  Has much better parsing however
+    //there's currently no way to add new entries yet
+    let mut existing_crontab = {
+        if crontab.exists() {
+            let mut buff = String::new();
+            let mut f = File::open("/var/spool/cron/crontabs/root")?;
+            f.read_to_string(&mut buff)?;
+            buff.split("\n").map(|s| s.to_string()).collect::<Vec<String>>()
+        } else {
+            Vec::new()
+        }
+    };
+    let existing_job_position = existing_crontab.iter().position(|line| line.contains(mount));
+    // If we found an existing job we remove the old and insert the new job
+    if let Some(pos) = existing_job_position {
+        existing_crontab.remove(pos);
+    }
+    existing_crontab.push(job.clone());
+
+    //Write back out
+    let mut f = File::create("/var/spool/cron/crontabs/root")?;
+    let written_bytes = f.write(&existing_crontab.join("\n").as_bytes())?;
+    Ok(written_bytes)
 }
 
 pub fn get_manual_bricks() -> Result<Vec<BrickDevice>, String> {

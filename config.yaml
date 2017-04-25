@@ -57,6 +57,16 @@ options:
         cfq
         deadline
         noop
+  defragmentation_interval:
+    type: string
+    default: "@weekly"
+    description: |
+      XFS and other filesystems fragment over time and this can lead to
+      degraded performance for your cluster.  This setting which takes any
+      valid crontab period will setup a defrag schedule.  Be aware that this
+      can generate significant IO on the cluster so choose a low activity
+      period. Zfs does not have an online defrag option so this
+      option mainly is concerned with Btrfs, Ext4 or XFS.
   ephemeral_unmount:
     type: string
     default:
