@@ -80,19 +80,19 @@ options:
       is not a typical use case).
   cluster_type:
     type: string
-    default: DistributedAndReplicate
+    default: Distributed-Replicate
     description: |
       The type of volume to setup.  DistributedAndReplicate is sufficient
       for most use cases.
       Other options include: Distribute,
         Arbiter,
         Stripe,
-        StripedAndReplicate,
+        Striped-Replicate,
         Disperse,
-        DistributedAndStripe,
-        DistributedAndReplicate,
-        DistributedAndStripedAndReplicate,
-        DistributedAndDisperse.
+        Distributed-Stripe,
+        Distributed-Replicate,
+        Distributed-Striped-Replicate,
+        Distributed-Disperse.
       For more information about these cluster types please see here:
       https://gluster.readthedocs.io/en/latest/Quick-Start-Guide/Architecture/#types-of-volumes
   replication_level:
@@ -102,6 +102,18 @@ options:
       This sets how many replicas of the data should be stored in the cluster.
       Generally 2 or 3 will be fine for almost all use cases.  Greater than 3
       could be useful for read heavy uses cases.
+  extra_level:
+    type: int
+    default: 1
+    description: |
+      For certain volume types
+      Arbiter,
+      Disperse,
+      Distributed-Disperse,
+      Distributed-Replicate,
+      Distributed-Striped-Replicate,
+      two values are needed.  The replication level and a second number.  That
+      second number should be specified here.
   filesystem_type:
     type: string
     default: xfs
@@ -121,6 +133,12 @@ options:
       Example: Setting this to "size" will pick the largest size automatically
       and delete the smaller size file. "majority" picks a file with identical
       mtime and size in more than half the number of bricks in the replica.
+  bitrot_detection:
+    type: boolean
+    default: true
+    description: |
+      Gluster has a bitrot detection daemon that runs periodically.  It
+      calculates checksums and repairs the data that doesn't match the replicas.
   source:
     type: string
     default: ppa:gluster/glusterfs-3.10

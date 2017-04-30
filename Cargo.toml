@@ -7,7 +7,7 @@ authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 chrono = { version = "0.3", features = ["rustc-serialize"] }
 debian = "*"
 fstab = "~0.3"
-gluster = "~0.7"
+gluster = {path = "../Gluster"}#"~0.7"
 init-daemon = "*"
 ipnetwork = "~0.12"
 itertools = "*"

@@ -53,6 +53,66 @@ rebalance-volume:
       description: The volume to rebalance
   required: [volume]
   additionalProperties: false
+set-bitrot-throttle:
+  description: |
+    The bitrot detection service aggression can be adjusted.
+  params:
+    volume:
+      type: string
+      description: The volume to set the option on
+    throttle:
+      type: string
+      enum: [lazy,normal,aggressive]
+  required: [volume, throttle]
+  additionalProperties: false
+set-bitrot-scan-frequency:
+  description: |
+    The bitrot detection service scanning frequency can be adjusted.
+  params:
+    volume:
+      type: string
+      description: The volume to set the option on
+    frequency:
+      type: string
+      enum: [hourly,daily,weekly,biweekly,monthly]
+  required: [volume, frequency]
+  additionalProperties: false
+pause-bitrot-scan:
+  description: |
+    Pause bitrot detection
+  params:
+    volume:
+      type: string
+      description: The volume to pause scannign on
+  required: [volume]
+  additionalProperties: false
+resume-bitrot-scan:
+  description: |
+    Resume bitrot detection
+  params:
+    volume:
+      type: string
+      description: The volume to resume scanning on
+  required: [volume]
+  additionalProperties: false
+disable-bitrot-scan:
+  description: |
+    Disable bitrot detection
+  params:
+    volume:
+      type: string
+      description: The volume to disable scanning on
+  required: [volume]
+  additionalProperties: false
+enable-bitrot-scan:
+  description: |
+    Enable bitrot detection
+  params:
+    volume:
+      type: string
+      description: The volume to enable scanning on
+  required: [volume]
+  additionalProperties: false
 set-volume-options:
   description: |
     You can tune volume options, as needed, while the cluster is online

@@ -19,7 +19,9 @@ extern crate resolve;
 extern crate serde_yaml;
 extern crate uuid;
 
-use actions::{disable_volume_quota, enable_volume_quota, list_volume_quotas, set_volume_options};
+use actions::{disable_bitrot_scan, enable_bitrot_scan, disable_volume_quota, enable_volume_quota,
+              list_volume_quotas, pause_bitrot_scan, resume_bitrot_scan, set_bitrot_scan_frequency,
+              set_bitrot_throttle, set_volume_options};
 use hooks::brick_detached::brick_detached;
 use hooks::config_changed::config_changed;
 use hooks::fuse_relation_joined::fuse_relation_joined;
@@ -30,7 +32,6 @@ use metrics::collect_metrics;
 
 use std::collections::BTreeMap;
 use std::env;
-use std::error::Error as StdError;
 use std::fs;
 use std::fs::create_dir;
 use std::num::ParseIntError;
@@ -390,7 +391,9 @@ fn device_initialized(brick_path: &PathBuf) -> Result<bool, JujuError> {
     let unit_storage = unitdata::Storage::new(None)?;
     log!("Getting unit_info");
     let unit_info = unit_storage.get::<bool>(&brick_path.to_string_lossy())?;
-    log!(format!("unit_info: {:?}", unit_info));
+    log!(format!("{} initialized: {:?}",
+                 brick_path.to_string_lossy(),
+                 unit_info));
     // Either it's Some() and we know about the unit
     // or it's None and we don't know and therefore it's not initialized
     Ok(unit_info.unwrap_or(false))
@@ -671,11 +674,17 @@ fn main() {
                  hook!("config-changed", config_changed),
                  hook!("create-volume-quota", enable_volume_quota),
                  hook!("delete-volume-quota", disable_volume_quota),
+                 hook!("disable-bitrot-scan", disable_bitrot_scan),
+                 hook!("enable-bitrot-scan", enable_bitrot_scan),
                  hook!("fuse-relation-joined", fuse_relation_joined),
                  hook!("list-volume-quotas", list_volume_quotas),
                  hook!("nfs-relation-joined", nfs_relation_joined),
+                 hook!("pause-bitrot-scan", pause_bitrot_scan),
+                 hook!("resume-bitrot-scan", resume_bitrot_scan),
                  hook!("server-relation-changed", server_changed),
                  hook!("server-relation-departed", server_removed),
+                 hook!("set-bitrot-scan-frequency", set_bitrot_scan_frequency),
+                 hook!("set-bitrot-throttle", set_bitrot_throttle),
                  hook!("set-volume-options", set_volume_options),
                  hook!("update-status", update_status)];
 
