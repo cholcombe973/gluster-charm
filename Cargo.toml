@@ -1,17 +1,17 @@
 [package]
 name = "gluster-charm"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 
 [dependencies]
 chrono = { version = "0.3", features = ["rustc-serialize"] }
 debian = "*"
 fstab = "~0.3"
-gluster = "~0.7"
+gluster = {path = "../Gluster"}#"~0.7"
 init-daemon = "*"
 ipnetwork = "~0.12"
 itertools = "*"
-juju = {path = "../Juju" } # "~0.6"
+juju = "~0.7"
 libc = "*"
 libudev = "*"
 nix = "~0.8"
@@ -22,6 +22,7 @@ resolve = "~0.1"
 rustc-serialize = "*"
 serde = "^0.9"
 serde_yaml = "^0.6"
+shellscript = "~0.3"
 uuid = { version = "^0.4", features = ["v4"] }
 
 # The development profile, used for `cargo build`

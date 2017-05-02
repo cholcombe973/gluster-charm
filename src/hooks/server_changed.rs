@@ -1,5 +1,6 @@
 extern crate gluster;
 extern crate juju;
+extern crate serde_yaml;
 
 use std::io::Read;
 use std::net::IpAddr;
@@ -145,7 +146,16 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
             3
         }
     };
-
+    let extra = match get_config_value("extra_level")?.parse() {
+        Ok(r) => r,
+        Err(e) => {
+            log!(format!("Invalid integer for extra_level.  Defaulting to 1. Error was \
+                                {}",
+                         e),
+                 Error);
+            1
+        }
+    };
     // Make sure all peers are in the cluster
     // spinlock
     wait_for_peers()?;
@@ -183,7 +193,7 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
             Ok(Status::Created)
         }
         VolumeType::Stripe => {
-            let _ = volume_create_striped(&volume_name, 3, Transport::Tcp, brick_list, true)
+            let _ = volume_create_striped(&volume_name, replicas, Transport::Tcp, brick_list, true)
                 .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
@@ -194,15 +204,19 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
             Ok(Status::Created)
         }
         VolumeType::Arbiter => {
-            let _ =
-                volume_create_arbiter(&volume_name, replicas, 1, Transport::Tcp, brick_list, true)
+            let _ = volume_create_arbiter(&volume_name,
+                                          replicas,
+                                          extra,
+                                          Transport::Tcp,
+                                          brick_list,
+                                          true)
                     .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
         VolumeType::StripedAndReplicate => {
             let _ = volume_create_striped_replicated(&volume_name,
-                                                     3,
-                                                     3,
+                                                     extra,
+                                                     replicas,
                                                      Transport::Tcp,
                                                      brick_list,
                                                      true)
@@ -210,25 +224,31 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
             Ok(Status::Created)
         }
         VolumeType::Disperse => {
-            let _ = volume_create_erasure(&volume_name, 3, 1, Transport::Tcp, brick_list, true)
-                .map_err(|e| e.to_string());
+            let _ = volume_create_erasure(&volume_name,
+                                          replicas,
+                                          extra,
+                                          Transport::Tcp,
+                                          brick_list,
+                                          true)
+                    .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
         // VolumeType::Tier => {},
         VolumeType::DistributedAndStripe => {
-            let _ = volume_create_striped(&volume_name, 3, Transport::Tcp, brick_list, true)
+            let _ = volume_create_striped(&volume_name, replicas, Transport::Tcp, brick_list, true)
                 .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
         VolumeType::DistributedAndReplicate => {
-            let _ = volume_create_replicated(&volume_name, 3, Transport::Tcp, brick_list, true)
-                .map_err(|e| e.to_string());
+            let _ =
+                volume_create_replicated(&volume_name, replicas, Transport::Tcp, brick_list, true)
+                    .map_err(|e| e.to_string());
             Ok(Status::Created)
         }
         VolumeType::DistributedAndStripedAndReplicate => {
             let _ = volume_create_striped_replicated(&volume_name,
-                                                     3,
-                                                     3,
+                                                     extra,
+                                                     replicas,
                                                      Transport::Tcp,
                                                      brick_list,
                                                      true)
@@ -238,8 +258,9 @@ fn create_volume(peers: &Vec<Peer>, volume_info: Option<Volume>) -> Result<Statu
         VolumeType::DistributedAndDisperse => {
             let _ = volume_create_erasure(
                 &volume_name,
-                brick_list.len()-1, //TODO: This number has to be lower than the brick length
-                1,
+                //brick_list.len()-1, //TODO: This number has to be lower than the brick length
+                replicas,
+                extra,
                 Transport::Tcp,
                 brick_list,
                 true).map_err(|e| e.to_string());
@@ -275,9 +296,6 @@ fn expand_volume(peers: Vec<Peer>, volume_info: Option<Volume>) -> Result<i32, S
             }
         }
     };
-
-    // Check to make sure the bricks are formatted and mounted
-    // let clean_bricks = try!(check_brick_list(&brick_list).map_err(|e| e.to_string()));
 
     log!(format!("Expanding volume with brick list: {:?}", brick_list),
          Info);
@@ -482,11 +500,13 @@ fn shrink_volume(peer: Peer, volume_info: Option<Volume>) -> Result<i32, String>
         Err(e) => Err(e.to_string()),
     }
 }
+
 fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
     match gluster::volume::volume_start(&volume_name, false) {
         Ok(_) => {
             log!("Starting volume succeeded.".to_string(), Info);
             status_set!(Active "Starting volume succeeded.");
+
             mount_cluster(&volume_name)?;
             let mut settings: Vec<GlusterOption> = Vec::new();
             // Starting in gluster 3.8 NFS is disabled in favor of ganesha.  I'd like to stick
@@ -526,6 +546,16 @@ fn start_gluster_volume(volume_name: &str) -> Result<(), String> {
                 };
             }
             let _ = volume_set_options(&volume_name, settings).map_err(|e| e.to_string())?;
+
+            // The has a default.  Should be safe
+            let bitrot_config = juju::config_get("bitrot_detection").unwrap().unwrap();
+            let bitrot_detection: bool =
+                serde_yaml::from_str(&bitrot_config).map_err(|e| e.to_string())?;
+            if bitrot_detection {
+                log!("Enabling bitrot detection");
+                status_set!(Active "Enabling bitrot detection.");
+                let _ = volume_enable_bitrot(&volume_name).map_err(|e| e.to_string())?;
+            }
 
             return Ok(());
         }
