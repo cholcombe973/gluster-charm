@@ -491,7 +491,6 @@ fn get_media_type(device: &libudev::Device) -> MediaType {
     }
 }
 
-#[allow(dead_code)]
 pub fn is_block_device(device_path: &PathBuf) -> Result<bool, String> {
     let context = try!(libudev::Context::new().map_err(|e| e.to_string()));
     let mut enumerator = try!(libudev::Enumerator::new(&context).map_err(|e| e.to_string()));
@@ -561,7 +560,13 @@ fn scan_devices(devices: Vec<String>) -> Result<Vec<BrickDevice>, String> {
             }
         };
         log!(format!("Checking if {:?} is a block device", &device_path));
-        let is_block_device = is_block_device(&device_path).unwrap_or(false);
+        let is_block_device = match is_block_device(&device_path) {
+            Ok(result) => result,
+            Err(e) => {
+                log!(format!("is_block_device failed detection: {}", e));
+                false
+            }
+        };
         if !is_block_device {
             log!(format!("Skipping invalid block device: {:?}", &device_path));
             continue;
