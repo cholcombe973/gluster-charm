@@ -97,6 +97,7 @@ pub enum MediaType {
     SolidState,
     Rotational,
     Loopback,
+    Virtual,
     Unknown,
 }
 
@@ -487,7 +488,18 @@ fn get_media_type(device: &libudev::Device) -> MediaType {
                 return MediaType::Rotational;
             }
         }
-        None => return MediaType::Unknown,
+        None => {
+            match device.property_value("ID_VENDOR") {
+                Some(s) => {
+                    let value = s.to_string_lossy();
+                    match value.as_ref() {
+                        "QEMU" => return MediaType::Virtual,
+                        _ => return MediaType::Unknown,
+                    }
+                }
+                None => return MediaType::Unknown,
+            }
+        }
     }
 }
 
