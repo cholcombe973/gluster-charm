@@ -1,5 +1,7 @@
 [package]
 name = "gluster-charm"
+description = "Gluster juju charm"
+license = "Apache-2.0"
 version = "1.0.1"
 authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 

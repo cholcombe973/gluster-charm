@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "gluster-charm"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "chrono 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "debian 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
