@@ -1,6 +1,6 @@
 [package]
 name = "gluster-charm"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Chris Holcombe<chris.holcombe@canonical.com>"]
 
 [dependencies]
@@ -11,7 +11,7 @@ gluster = "~0.7"
 init-daemon = "*"
 ipnetwork = "~0.12"
 itertools = "*"
-juju = "~0.7"
+juju = "~1.0"
 libc = "*"
 libudev = "*"
 nix = "~0.8"
